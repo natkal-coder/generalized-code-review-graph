@@ -10,5 +10,12 @@
   "homepage": "https://github.com/tirth8205/code-review-graph",
   "repository": "https://github.com/tirth8205/code-review-graph",
   "license": "MIT",
-  "keywords": ["code-review", "knowledge-graph", "incremental", "tree-sitter", "mcp", "claude-code"]
+  "keywords": ["code-review", "knowledge-graph", "incremental", "tree-sitter", "mcp", "claude-code"],
+  "mcpServers": {
+    "code-review-graph": {
+      "command": "uvx",
+      "args": ["code-review-graph", "serve"]
+    }
+  },
+  "skills": "./skills/"
 }
