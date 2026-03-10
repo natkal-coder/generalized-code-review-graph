@@ -26,7 +26,8 @@ Benchmarked on three production open-source projects: **6.8x fewer tokens for co
 **Claude Code Plugin** (recommended)
 
 ```bash
-claude plugin add tirth8205/code-review-graph
+claude plugin marketplace add tirth8205/code-review-graph
+claude plugin install code-review-graph@code-review-graph
 ```
 
 **pip**
