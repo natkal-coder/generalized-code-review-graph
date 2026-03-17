@@ -61,6 +61,9 @@ diagrams/export_pngs.mjs
 diagrams/generate_diagrams.py
 *.excalidraw
 
+# Evaluation test repos (third-party checkouts)
+evaluate/test_repos/
+
 # Draft/duplicate files
 evaluate/results?2.csv
 evaluate/results?3.csv
