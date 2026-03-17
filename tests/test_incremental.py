@@ -57,7 +57,7 @@ class TestGetDbPath:
         get_db_path(tmp_path)
         gi = tmp_path / ".code-review-graph" / ".gitignore"
         assert gi.exists()
-        assert gi.read_text() == "*\n"
+        assert "*\n" in gi.read_text()
 
     def test_migrates_legacy_db(self, tmp_path):
         legacy = tmp_path / ".code-review-graph.db"

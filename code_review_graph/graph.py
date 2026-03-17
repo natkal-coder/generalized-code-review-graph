@@ -286,7 +286,7 @@ class GraphStore:
     # --- Impact / Graph traversal ---
 
     def get_impact_radius(
-        self, changed_files: list[str], max_depth: int = 2
+        self, changed_files: list[str], max_depth: int = 2, max_nodes: int = 500
     ) -> dict[str, Any]:
         """BFS from changed files to find all impacted nodes within depth N.
 
