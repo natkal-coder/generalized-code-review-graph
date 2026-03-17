@@ -123,6 +123,7 @@
         "codeReviewGraph.cliPath": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Path to the code-review-graph CLI binary. Leave empty to use the bundled version or the one found on PATH."
         },
         "codeReviewGraph.autoUpdate": {
