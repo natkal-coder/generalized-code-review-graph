@@ -80,6 +80,27 @@ export class CliWrapper {
     }
 
     /**
+     * Start the watch daemon for continuous file monitoring.
+     */
+    async watchGraph(workspaceRoot: string): Promise<CliResult> {
+        return this.exec(['watch'], workspaceRoot);
+    }
+
+    /**
+     * Compute embeddings for all graph nodes.
+     */
+    async embedGraph(workspaceRoot: string): Promise<CliResult> {
+        return vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: 'Code Review Graph: Computing embeddings\u2026',
+                cancellable: false,
+            },
+            () => this.exec(['embed'], workspaceRoot),
+        );
+    }
+
+    /**
      * Detect which Python package installer is available on the system.
      * Checks in preference order: uv, pipx, pip3.
      */

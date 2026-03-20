@@ -129,10 +129,21 @@ export class GraphWebviewPanel {
           message.filePath as string,
           message.lineStart as number
         );
+        // Bidirectional sync: reveal in tree view
+        if (message.qualifiedName) {
+          vscode.commands.executeCommand(
+            "codeReviewGraph.revealInTree",
+            message.qualifiedName as string
+          );
+        }
         break;
 
       case "exportSvg":
         this.exportSvgToClipboard(message.svg as string);
+        break;
+
+      case "exportPng":
+        this.savePngToFile(message.data as string);
         break;
     }
   }
@@ -160,10 +171,26 @@ export class GraphWebviewPanel {
       edges = this.reader.getEdgesAmong(qualifiedNames);
     }
 
+    // Enforce maxNodes setting
+    const config = vscode.workspace.getConfiguration("codeReviewGraph");
+    const maxNodes = config.get<number>("graph.maxNodes", 500);
+    let truncated = false;
+    if (nodes.length > maxNodes) {
+      truncated = true;
+      nodes = nodes.slice(0, maxNodes);
+      const nodeQns = new Set(nodes.map((n: { qualifiedName: string }) => n.qualifiedName));
+      edges = edges.filter(
+        (e: { sourceQualified: string; targetQualified: string }) =>
+          nodeQns.has(e.sourceQualified) && nodeQns.has(e.targetQualified)
+      );
+    }
+
     this.panel.webview.postMessage({
       command: "setData",
       nodes,
       edges,
+      truncated,
+      maxNodes,
     });
 
     // Send theme
@@ -226,6 +253,34 @@ export class GraphWebviewPanel {
     vscode.window.showInformationMessage(
       "Code Graph: SVG copied to clipboard."
     );
+  }
+
+  /**
+   * Save PNG data URL to a file.
+   */
+  private async savePngToFile(dataUrl: string): Promise<void> {
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file("code-graph.png"),
+      filters: { "PNG Image": ["png"] },
+    });
+    if (!uri) { return; }
+
+    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+    const buffer = Buffer.from(base64, "base64");
+    await vscode.workspace.fs.writeFile(uri, buffer);
+    vscode.window.showInformationMessage("Code Graph: PNG saved.");
+  }
+
+  /**
+   * Highlight a node by qualified name from external code (tree view click).
+   */
+  static highlightNode(qualifiedName: string): void {
+    if (GraphWebviewPanel.currentPanel) {
+      GraphWebviewPanel.currentPanel.panel.webview.postMessage({
+        command: "highlightNode",
+        qualifiedName,
+      });
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -518,10 +573,12 @@ export class GraphWebviewPanel {
     <div class="toolbar-group">
       <button id="btn-fit" class="toolbar-btn">Fit</button>
       <button id="btn-export" class="toolbar-btn">Export SVG</button>
+      <button id="btn-export-png" class="toolbar-btn">Export PNG</button>
     </div>
 
     <!-- Node count -->
     <span id="node-count"></span>
+    <span id="truncation-warning" style="display:none;color:var(--btn-bg);font-size:11px;margin-left:8px;cursor:pointer;" title="Increase codeReviewGraph.graph.maxNodes in settings"></span>
   </div>
 
   <!-- Graph -->

@@ -108,6 +108,16 @@
         "icon": "$(git-compare)"
       },
       {
+        "command": "codeReviewGraph.embedGraph",
+        "title": "Code Graph: Compute Embeddings",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "codeReviewGraph.watchGraph",
+        "title": "Code Graph: Watch Mode",
+        "icon": "$(eye)"
+      },
+      {
         "command": "codeReviewGraph.buildGraph",
         "title": "Code Graph: Build Graph",
         "icon": "$(database)"
@@ -119,6 +129,13 @@
       }
     ],
     "menus": {
+      "scm/title": [
+        {
+          "command": "codeReviewGraph.reviewChanges",
+          "group": "navigation",
+          "when": "scmProvider == git"
+        }
+      ],
       "view/item/context": [
         {
           "command": "codeReviewGraph.showBlastRadius",

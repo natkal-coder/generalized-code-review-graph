@@ -768,7 +768,7 @@ function bindToolbarEvents(): void {
     });
   }
 
-  // Export button
+  // Export SVG button
   const exportBtn = document.getElementById("btn-export");
   if (exportBtn) {
     exportBtn.addEventListener("click", () => {
@@ -781,6 +781,33 @@ function bindToolbarEvents(): void {
           svg: svgString,
         });
       }
+    });
+  }
+
+  // Export PNG button
+  const exportPngBtn = document.getElementById("btn-export-png");
+  if (exportPngBtn) {
+    exportPngBtn.addEventListener("click", () => {
+      const svgEl = document.querySelector("#graph-area svg") as SVGSVGElement | null;
+      if (!svgEl) { return; }
+
+      const serializer = new XMLSerializer();
+      const svgString = serializer.serializeToString(svgEl);
+      const canvas = document.createElement("canvas");
+      const bbox = svgEl.getBoundingClientRect();
+      canvas.width = bbox.width * 2;  // 2x for retina
+      canvas.height = bbox.height * 2;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { return; }
+      ctx.scale(2, 2);
+
+      const img = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0);
+        const pngData = canvas.toDataURL("image/png");
+        vscodeApi.postMessage({ command: "exportPng", data: pngData });
+      };
+      img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgString)));
     });
   }
 }
@@ -800,6 +827,14 @@ function bindExtensionMessages(): void {
         );
         // Auto-fit after simulation settles a bit
         setTimeout(() => fitToView(), 800);
+        // Show truncation warning if needed
+        if (message.truncated) {
+          const warn = document.getElementById("truncation-warning");
+          if (warn) {
+            warn.style.display = "inline";
+            warn.textContent = `\u26a0 Showing ${message.maxNodes} of more nodes. Increase maxNodes in settings.`;
+          }
+        }
         break;
 
       case "highlightNode":

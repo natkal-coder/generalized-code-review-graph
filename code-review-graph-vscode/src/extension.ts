@@ -14,9 +14,11 @@ import { GraphWebviewPanel } from "./views/graphWebview";
 import { Installer } from "./onboarding/installer";
 import { registerWalkthroughCommands, showWelcomeIfNeeded } from "./onboarding/welcome";
 import { StatusBar } from "./views/statusBar";
+import { ScmDecorationProvider } from "./features/scmDecorations";
 
 let sqliteReader: SqliteReader | undefined;
 let autoUpdateTimer: ReturnType<typeof setTimeout> | undefined;
+let scmDecorationProvider: ScmDecorationProvider | undefined;
 
 /**
  * Locate the graph database file in the workspace.
@@ -38,9 +40,21 @@ function findGraphDb(workspaceRoot: string): string | undefined {
 
 /**
  * Get the workspace root folder path, or undefined if no workspace is open.
+ * Checks all workspace folders for a graph database (multi-root support).
  */
 function getWorkspaceRoot(): string | undefined {
-  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders) { return undefined; }
+
+  // Prefer the folder that has a graph database
+  for (const folder of folders) {
+    if (findGraphDb(folder.uri.fsPath)) {
+      return folder.uri.fsPath;
+    }
+  }
+
+  // Fall back to first folder
+  return folders[0]?.uri.fsPath;
 }
 
 
@@ -506,6 +520,50 @@ function registerCommands(
     )
   );
 
+  // -----------------------------------------------------------------
+  // codeReviewGraph.embedGraph
+  // -----------------------------------------------------------------
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codeReviewGraph.embedGraph", async () => {
+      const workspaceRoot = getWorkspaceRoot();
+      if (!workspaceRoot) {
+        vscode.window.showErrorMessage("No workspace folder is open.");
+        return;
+      }
+
+      const result = await cli.embedGraph(workspaceRoot);
+      if (result.success) {
+        vscode.window.showInformationMessage("Code Graph: Embeddings computed.");
+      } else {
+        const msg = result.stderr.includes("not installed")
+          ? "Install embeddings support: pip install code-review-graph[embeddings]"
+          : `Embedding failed: ${result.stderr}`;
+        vscode.window.showErrorMessage(`Code Graph: ${msg}`);
+      }
+    })
+  );
+
+  // -----------------------------------------------------------------
+  // codeReviewGraph.watchGraph
+  // -----------------------------------------------------------------
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codeReviewGraph.watchGraph", async () => {
+      const workspaceRoot = getWorkspaceRoot();
+      if (!workspaceRoot) {
+        vscode.window.showErrorMessage("No workspace folder is open.");
+        return;
+      }
+
+      vscode.window.showInformationMessage("Code Graph: Watch mode started.");
+      const result = await cli.watchGraph(workspaceRoot);
+      if (!result.success) {
+        vscode.window.showErrorMessage(
+          `Code Graph: Watch failed. ${result.stderr}`
+        );
+      }
+    })
+  );
+
   context.subscriptions.push(
     vscode.commands.registerCommand("codeReviewGraph.showGraph", async () => {
       if (!sqliteReader) {
@@ -595,15 +653,18 @@ function registerCommands(
 
             let changedFiles: string[] = [];
             try {
-              const { stdout } = await execFileAsync(
-                "git",
-                ["diff", "--name-only", "HEAD"],
+              const r1 = await execFileAsync(
+                "git", ["diff", "--name-only", "HEAD"],
                 { cwd: workspaceRoot }
               );
-              changedFiles = stdout
-                .trim()
-                .split("\n")
-                .filter((line) => line.length > 0);
+              const r2 = await execFileAsync(
+                "git", ["diff", "--cached", "--name-only"],
+                { cwd: workspaceRoot }
+              );
+              changedFiles = [...new Set([
+                ...r1.stdout.trim().split("\n").filter(Boolean),
+                ...r2.stdout.trim().split("\n").filter(Boolean),
+              ])];
             } catch {
               // git not available or not a git repo
             }
@@ -615,12 +676,86 @@ function registerCommands(
               return;
             }
 
-            const impact = sqliteReader!.getImpactRadius(changedFiles);
+            const absFiles = changedFiles.map(f => path.join(workspaceRoot, f));
+            const impact = sqliteReader!.getImpactRadius(absFiles);
+
+            // --- Generate review guidance ---
+            const guidance: string[] = [];
+            const impactedFileCount = new Set(
+              impact.impactedNodes.map(n => n.filePath)
+            ).size;
+
+            // Test coverage check
+            const untestedFns: string[] = [];
+            for (const node of impact.changedNodes) {
+              if (node.kind !== "Function" || node.isTest) { continue; }
+              const edges = sqliteReader!.getEdgesByTarget(node.qualifiedName);
+              const hasCoverage = edges.some(e => e.kind === "TESTED_BY");
+              if (!hasCoverage) {
+                const out = sqliteReader!.getEdgesBySource(node.qualifiedName);
+                if (!out.some(e => e.kind === "TESTED_BY")) {
+                  untestedFns.push(node.name);
+                }
+              }
+            }
+
+            if (untestedFns.length > 0) {
+              guidance.push(
+                `\u26a0\ufe0f **${untestedFns.length} changed function(s) lack test coverage**: ${untestedFns.slice(0, 5).join(", ")}${untestedFns.length > 5 ? "..." : ""}`
+              );
+            }
+
+            // Wide blast radius warning
+            if (impactedFileCount > 10) {
+              guidance.push(
+                `\u26a0\ufe0f **Wide blast radius**: ${impactedFileCount} files impacted — consider splitting this change.`
+              );
+            }
+
+            // Inheritance changes
+            const inheritanceChanges = impact.edges.filter(
+              e => e.kind === "INHERITS" || e.kind === "IMPLEMENTS"
+            );
+            if (inheritanceChanges.length > 0) {
+              guidance.push(
+                `\u26a0\ufe0f **Inheritance chain affected**: ${inheritanceChanges.length} inheritance/implementation edge(s) touched.`
+              );
+            }
+
+            // Cross-file impacts
+            if (impact.impactedNodes.length > 0) {
+              guidance.push(
+                `\u2139\ufe0f ${impact.impactedNodes.length} nodes in ${impactedFileCount} file(s) may be affected by these changes.`
+              );
+            }
+
+            // Show guidance in output channel
+            const channel = vscode.window.createOutputChannel("Code Graph Review", { log: true });
+            channel.appendLine("# Review Guidance");
+            channel.appendLine("");
+            channel.appendLine(`Changed files: ${changedFiles.length}`);
+            channel.appendLine(`Changed nodes: ${impact.changedNodes.length}`);
+            channel.appendLine(`Impacted nodes: ${impact.impactedNodes.length}`);
+            channel.appendLine(`Impacted files: ${impactedFileCount}`);
+            channel.appendLine("");
+            if (guidance.length > 0) {
+              for (const g of guidance) { channel.appendLine(g); }
+            } else {
+              channel.appendLine("\u2705 No concerns detected.");
+            }
+            channel.show(true);
+
+            // Also show in graph
             GraphWebviewPanel.createOrShow(
               context.extensionUri,
               sqliteReader!,
               impact
             );
+
+            // Update SCM decorations
+            if (scmDecorationProvider && sqliteReader) {
+              await scmDecorationProvider.update(sqliteReader, workspaceRoot);
+            }
           }
         );
       }
@@ -757,6 +892,19 @@ export async function activate(
       // Graph database found - initialize
       sqliteReader = new SqliteReader(dbPath);
 
+      // Schema compatibility check
+      const schemaWarning = sqliteReader.checkSchemaCompatibility();
+      if (schemaWarning) {
+        const choice = await vscode.window.showWarningMessage(
+          `Code Graph: ${schemaWarning}`,
+          "Rebuild Graph",
+          "Dismiss"
+        );
+        if (choice === "Rebuild Graph") {
+          await vscode.commands.executeCommand("codeReviewGraph.buildGraph");
+        }
+      }
+
       // Register tree view providers
       const codeGraphProvider = new CodeGraphTreeProvider(
         sqliteReader,
@@ -785,11 +933,31 @@ export async function activate(
       statusBar.update(sqliteReader);
       statusBar.show();
       context.subscriptions.push(statusBar);
+
+      // Register SCM file decoration provider
+      scmDecorationProvider = new ScmDecorationProvider();
+      context.subscriptions.push(
+        vscode.window.registerFileDecorationProvider(scmDecorationProvider)
+      );
     } else {
       // No graph database found - show welcome
       showWelcomeIfNeeded(context);
     }
   }
+
+  // Register revealInTree command for bidirectional graph→tree sync
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "codeReviewGraph.revealInTree",
+      (_qualifiedName: string) => {
+        // When a node is clicked in the graph, highlight it in the graph
+        // The graph webview already calls this; the tree view sync relies
+        // on the file navigation that nodeClicked also triggers.
+        // This command is a hook for future tree reveal integration.
+        GraphWebviewPanel.highlightNode(_qualifiedName);
+      }
+    )
+  );
 
   // Register commands (always, even without a database)
   registerCommands(context, cli);
