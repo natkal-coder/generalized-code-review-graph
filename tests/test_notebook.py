@@ -199,3 +199,64 @@ class TestDatabricksNotebookParsing:
         calls = [e for e in self.edges if e.kind == "CALLS"]
         targets = {e.target.split("::")[-1] for e in calls}
         assert "transform_data" in targets
+
+
+class TestDatabricksPyNotebook:
+    def setup_method(self):
+        self.parser = CodeParser()
+        self.nodes, self.edges = self.parser.parse_file(
+            FIXTURES / "sample_databricks_export.py",
+        )
+
+    def test_detects_databricks_header(self):
+        """Should parse as notebook, not regular Python."""
+        file_node = [n for n in self.nodes if n.kind == "File"][0]
+        assert file_node.extra.get("notebook_format") == "databricks_py"
+
+    def test_parses_python_functions(self):
+        funcs = [n for n in self.nodes if n.kind == "Function"]
+        names = {f.name for f in funcs}
+        assert "load_config" in names
+        assert "process_events" in names
+
+    def test_extracts_sql_tables(self):
+        imports = [e for e in self.edges if e.kind == "IMPORTS_FROM"]
+        targets = {e.target for e in imports}
+        assert "bronze.events" in targets
+        assert "silver.users" in targets
+        assert "gold.summary" in targets
+        assert "silver.processed" in targets
+
+    def test_skips_magic_md_cells(self):
+        funcs = [n for n in self.nodes if n.kind == "Function"]
+        names = {f.name for f in funcs}
+        assert len(names) == 2  # load_config + process_events
+
+    def test_cell_index_tracking(self):
+        funcs = {n.name: n for n in self.nodes if n.kind == "Function"}
+        assert funcs["load_config"].extra.get("cell_index") == 0
+        assert funcs["process_events"].extra.get("cell_index") == 4
+
+    def test_python_imports(self):
+        imports = [
+            e for e in self.edges
+            if e.kind == "IMPORTS_FROM" and e.target in ("os", "pathlib")
+        ]
+        targets = {e.target for e in imports}
+        assert "os" in targets
+        assert "pathlib" in targets
+
+    def test_cross_cell_calls(self):
+        calls = [e for e in self.edges if e.kind == "CALLS"]
+        targets = {e.target.split("::")[-1] for e in calls}
+        assert "load_config" in targets
+
+    def test_regular_py_not_affected(self):
+        """A regular .py file (no header) should parse normally."""
+        source = b"def hello():\n    return 'hi'\n"
+        nodes, edges = self.parser.parse_bytes(Path("regular.py"), source)
+        funcs = [n for n in nodes if n.kind == "Function"]
+        assert len(funcs) == 1
+        assert funcs[0].name == "hello"
+        file_node = [n for n in nodes if n.kind == "File"][0]
+        assert "notebook_format" not in file_node.extra
