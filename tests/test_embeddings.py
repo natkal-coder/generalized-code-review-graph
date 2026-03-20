@@ -52,6 +52,11 @@ class TestCosineSimilarity:
         b = [1.0, 2.0]
         assert _cosine_similarity(a, b) == 0.0
 
+    def test_dimension_mismatch(self):
+        a = [1.0, 2.0, 3.0]
+        b = [1.0, 2.0]
+        assert _cosine_similarity(a, b) == 0.0
+
 
 class TestNodeToText:
     def _make_node(self, **kwargs):
@@ -93,21 +98,21 @@ class TestNodeToText:
 class TestEmbeddingStore:
     def test_store_initializes(self, tmp_path):
         db = tmp_path / "embeddings.db"
-        with patch("code_review_graph.embeddings._check_available", return_value=False):
+        with patch("code_review_graph.embeddings.get_provider", return_value=None):
             store = EmbeddingStore(db)
             assert store.count() == 0
             store.close()
 
     def test_count_empty(self, tmp_path):
         db = tmp_path / "embeddings.db"
-        with patch("code_review_graph.embeddings._check_available", return_value=False):
+        with patch("code_review_graph.embeddings.get_provider", return_value=None):
             store = EmbeddingStore(db)
             assert store.count() == 0
             store.close()
 
     def test_embed_nodes_returns_zero_when_unavailable(self, tmp_path):
         db = tmp_path / "embeddings.db"
-        with patch("code_review_graph.embeddings._check_available", return_value=False):
+        with patch("code_review_graph.embeddings.get_provider", return_value=None):
             store = EmbeddingStore(db)
             result = store.embed_nodes([])
             assert result == 0
@@ -115,7 +120,7 @@ class TestEmbeddingStore:
 
     def test_search_returns_empty_when_unavailable(self, tmp_path):
         db = tmp_path / "embeddings.db"
-        with patch("code_review_graph.embeddings._check_available", return_value=False):
+        with patch("code_review_graph.embeddings.get_provider", return_value=None):
             store = EmbeddingStore(db)
             results = store.search("query")
             assert results == []
@@ -123,7 +128,7 @@ class TestEmbeddingStore:
 
     def test_remove_node(self, tmp_path):
         db = tmp_path / "embeddings.db"
-        with patch("code_review_graph.embeddings._check_available", return_value=False):
+        with patch("code_review_graph.embeddings.get_provider", return_value=None):
             store = EmbeddingStore(db)
             # Should not raise even if node doesn't exist
             store.remove_node("nonexistent::func")
