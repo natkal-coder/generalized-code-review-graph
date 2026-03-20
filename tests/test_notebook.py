@@ -86,14 +86,14 @@ class TestNotebookParsing:
     def test_non_python_kernel(self):
         nb = {
             "cells": [
-                {"cell_type": "code", "source": ["x <- 1"], "outputs": []},
+                {"cell_type": "code", "source": ["println(\"hello\")"], "outputs": []},
             ],
-            "metadata": {"kernelspec": {"language": "r"}},
+            "metadata": {"kernelspec": {"language": "scala"}},
             "nbformat": 4,
         }
         source = json.dumps(nb).encode("utf-8")
         nodes, edges = self.parser.parse_bytes(
-            Path("r_notebook.ipynb"), source,
+            Path("scala_notebook.ipynb"), source,
         )
         assert nodes == []
         assert edges == []

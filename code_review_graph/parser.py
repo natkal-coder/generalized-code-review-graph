@@ -482,29 +482,32 @@ class CodeParser:
     def _parse_notebook(
         self, path: Path, source: bytes,
     ) -> tuple[list[NodeInfo], list[EdgeInfo]]:
-        """Parse a Jupyter notebook by extracting Python code cells."""
+        """Parse a Jupyter notebook by extracting code cells."""
         try:
             nb = json.loads(source)
         except (json.JSONDecodeError, UnicodeDecodeError):
             return [], []
 
-        # Determine kernel language — phase 1 only supports Python
+        # Determine kernel language
         kernel_lang = (
             nb.get("metadata", {}).get("kernelspec", {}).get("language")
             or nb.get("metadata", {}).get("language_info", {}).get("name")
             or "python"
-        )
-        if kernel_lang.lower() != "python":
+        ).lower()
+
+        # Only parse supported languages
+        supported = {"python", "r"}
+        if kernel_lang not in supported:
             return [], []
 
-        file_path_str = str(path)
-        test_file = _is_test_file(file_path_str)
-
-        # Collect code cells, filter magic/shell lines, track offsets
-        code_chunks: list[str] = []
-        # (cell_index, concat_start_line, concat_end_line) — 1-based
-        cell_offsets: list[tuple[int, int, int]] = []
-        current_line = 1  # 1-based line in concatenated source
+        # Build CellInfo list from code cells
+        cells: list[CellInfo] = []
+        magic_lang_map = {
+            "%python": "python",
+            "%sql": "sql",
+            "%r": "r",
+        }
+        skip_magics = {"%scala", "%md", "%sh"}
 
         for cell_idx, cell in enumerate(nb.get("cells", [])):
             if cell.get("cell_type") != "code":
@@ -512,76 +515,162 @@ class CodeParser:
             lines = cell.get("source", [])
             if isinstance(lines, str):
                 lines = lines.splitlines(keepends=True)
-            # Filter magic commands and shell escapes
-            filtered = [
-                ln for ln in lines
-                if not ln.lstrip().startswith(("%", "!"))
-            ]
+            if not lines:
+                continue
+
+            # Check first line for language-switching magic
+            first_line = lines[0].strip()
+            cell_lang = kernel_lang
+            cell_lines = lines
+
+            for magic, lang in magic_lang_map.items():
+                if first_line == magic or first_line.startswith(magic + " "):
+                    cell_lang = lang
+                    cell_lines = lines[1:]  # strip magic line
+                    break
+            else:
+                # Check for skip magics
+                for skip in skip_magics:
+                    if first_line == skip or first_line.startswith(skip + " "):
+                        cell_lines = []
+                        break
+
+            # Filter %pip, ! lines from Python/R content (not SQL)
+            if cell_lang in ("python", "r"):
+                filtered = [
+                    ln for ln in cell_lines
+                    if not ln.lstrip().startswith(("%", "!"))
+                ]
+            else:
+                filtered = cell_lines
             if not filtered:
                 continue
 
             cell_source = "".join(filtered)
-            cell_line_count = cell_source.count("\n") + (
-                1 if not cell_source.endswith("\n") else 0
-            )
+            cells.append(CellInfo(index=cell_idx, language=cell_lang, source=cell_source))
 
-            cell_offsets.append((
-                cell_idx, current_line, current_line + cell_line_count - 1,
-            ))
-            code_chunks.append(cell_source)
-            current_line += cell_line_count + 1  # +1 for blank separator
-
-        if not code_chunks:
+        if not cells:
+            file_path_str = str(path)
             return [NodeInfo(
                 kind="File",
                 name=file_path_str,
                 file_path=file_path_str,
                 line_start=1,
                 line_end=1,
-                language="python",
-                is_test=test_file,
+                language=kernel_lang,
+                is_test=_is_test_file(file_path_str),
             )], []
 
-        concatenated = "\n".join(code_chunks)
-        concat_bytes = concatenated.encode("utf-8")
+        return self._parse_notebook_cells(path, cells, kernel_lang)
 
-        # Parse concatenated source as Python
-        py_parser = self._get_parser("python")
-        if not py_parser:
-            return [], []
+    def _parse_notebook_cells(
+        self,
+        path: Path,
+        cells: list[CellInfo],
+        default_language: str,
+    ) -> tuple[list[NodeInfo], list[EdgeInfo]]:
+        """Parse notebook cells grouped by language.
 
-        tree = py_parser.parse(concat_bytes)
+        Args:
+            path: Notebook file path.
+            cells: List of CellInfo with index, language, and source.
+            default_language: Default language for the File node.
+        """
+        file_path_str = str(path)
+        test_file = _is_test_file(file_path_str)
 
-        all_nodes: list[NodeInfo] = [NodeInfo(
+        # Group cells by language
+        lang_cells: dict[str, list[CellInfo]] = {}
+        for cell in cells:
+            lang_cells.setdefault(cell.language, []).append(cell)
+
+        all_nodes: list[NodeInfo] = []
+        all_edges: list[EdgeInfo] = []
+
+        # Track offsets per language for cell_index tagging.
+        # Each language group is parsed independently by Tree-sitter,
+        # so line numbers restart at 1 for each group.
+        all_cell_offsets: list[tuple[int, int, int]] = []
+        max_line = 1
+
+        for lang, lang_group in lang_cells.items():
+            if lang == "sql":
+                # SQL: regex-based table extraction
+                for cell in lang_group:
+                    for match in _SQL_TABLE_RE.finditer(cell.source):
+                        table_name = match.group(1).replace("`", "")
+                        all_edges.append(EdgeInfo(
+                            kind="IMPORTS_FROM",
+                            source=file_path_str,
+                            target=table_name,
+                            file_path=file_path_str,
+                            line=1,
+                        ))
+                continue
+
+            if lang not in ("python", "r"):
+                continue
+
+            ts_parser = self._get_parser(lang)
+            if not ts_parser:
+                continue
+
+            # Concatenate cells of this language.
+            # Line numbers start at 1 for each language group because
+            # Tree-sitter parses each concatenation independently.
+            code_chunks: list[str] = []
+            cell_offsets: list[tuple[int, int, int]] = []
+            current_line = 1
+
+            for cell in lang_group:
+                cell_line_count = cell.source.count("\n") + (
+                    1 if not cell.source.endswith("\n") else 0
+                )
+                cell_offsets.append((
+                    cell.index, current_line, current_line + cell_line_count - 1,
+                ))
+                code_chunks.append(cell.source)
+                current_line += cell_line_count + 1
+
+            concatenated = "\n".join(code_chunks)
+            concat_bytes = concatenated.encode("utf-8")
+
+            tree = ts_parser.parse(concat_bytes)
+
+            import_map, defined_names = self._collect_file_scope(
+                tree.root_node, lang, concat_bytes,
+            )
+            self._extract_from_tree(
+                tree.root_node, concat_bytes, lang,
+                file_path_str, all_nodes, all_edges,
+                import_map=import_map, defined_names=defined_names,
+            )
+
+            all_cell_offsets.extend(cell_offsets)
+            max_line = max(max_line, current_line)
+
+        # Create File node
+        file_node = NodeInfo(
             kind="File",
             name=file_path_str,
             file_path=file_path_str,
             line_start=1,
-            line_end=concatenated.count("\n") + 1,
-            language="python",
+            line_end=max_line,
+            language=default_language,
             is_test=test_file,
-        )]
-        all_edges: list[EdgeInfo] = []
-
-        import_map, defined_names = self._collect_file_scope(
-            tree.root_node, "python", concat_bytes,
         )
-        self._extract_from_tree(
-            tree.root_node, concat_bytes, "python",
-            file_path_str, all_nodes, all_edges,
-            import_map=import_map, defined_names=defined_names,
-        )
+        all_nodes.insert(0, file_node)
 
         # Resolve call targets
         all_edges = self._resolve_call_targets(
             all_nodes, all_edges, file_path_str,
         )
 
-        # Tag nodes with cell_index via extra
+        # Tag nodes with cell_index
         for node in all_nodes:
             if node.kind == "File":
                 continue
-            for cell_idx, start, end in cell_offsets:
+            for cell_idx, start, end in all_cell_offsets:
                 if start <= node.line_start <= end:
                     node.extra["cell_index"] = cell_idx
                     break
