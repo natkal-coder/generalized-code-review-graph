@@ -888,6 +888,13 @@ def get_docs_section(section_name: str, repo_root: str | None = None) -> dict[st
     except (RuntimeError, ValueError):
         pass
 
+    # Fallback: package directory (for uvx/pip installs)
+    pkg_docs = Path(__file__).parent.parent / "docs" / "LLM-OPTIMIZED-REFERENCE.md"
+    if pkg_docs.exists():
+        pkg_root = pkg_docs.parent.parent
+        if pkg_root not in search_roots:
+            search_roots.append(pkg_root)
+
     for search_root in search_roots:
         candidate = search_root / "docs" / "LLM-OPTIMIZED-REFERENCE.md"
         if candidate.exists():
