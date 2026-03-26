@@ -1,13 +1,16 @@
 """Tests for skills and hooks auto-install."""
 
 import json
+from unittest.mock import patch
 
 from code_review_graph.skills import (
+    PLATFORMS,
     _CLAUDE_MD_SECTION_MARKER,
     generate_hooks_config,
     generate_skills,
     inject_claude_md,
     install_hooks,
+    install_platform_configs,
 )
 
 
@@ -159,3 +162,128 @@ class TestInjectClaudeMd:
 
         assert first_content == second_content
         assert second_content.count(_CLAUDE_MD_SECTION_MARKER) == 1
+
+
+class TestInstallPlatformConfigs:
+    def test_install_cursor_config(self, tmp_path):
+        with patch.dict(PLATFORMS, {
+            "cursor": {**PLATFORMS["cursor"], "detect": lambda: True},
+        }):
+            configured = install_platform_configs(tmp_path, target="cursor")
+        assert "Cursor" in configured
+        config_path = tmp_path / ".cursor" / "mcp.json"
+        assert config_path.exists()
+        data = json.loads(config_path.read_text())
+        assert "code-review-graph" in data["mcpServers"]
+        assert data["mcpServers"]["code-review-graph"]["type"] == "stdio"
+
+    def test_install_windsurf_config(self, tmp_path):
+        windsurf_dir = tmp_path / ".codeium" / "windsurf"
+        windsurf_dir.mkdir(parents=True)
+        config_path = windsurf_dir / "mcp_config.json"
+        with patch.dict(PLATFORMS, {
+            "windsurf": {
+                **PLATFORMS["windsurf"],
+                "config_path": lambda root: config_path,
+                "detect": lambda: True,
+            },
+        }):
+            configured = install_platform_configs(tmp_path, target="windsurf")
+        assert "Windsurf" in configured
+        data = json.loads(config_path.read_text())
+        entry = data["mcpServers"]["code-review-graph"]
+        assert "type" not in entry
+        assert entry["command"] == "uvx"
+
+    def test_install_zed_config(self, tmp_path):
+        zed_settings = tmp_path / "zed" / "settings.json"
+        zed_settings.parent.mkdir(parents=True)
+        with patch.dict(PLATFORMS, {
+            "zed": {
+                **PLATFORMS["zed"],
+                "config_path": lambda root: zed_settings,
+                "detect": lambda: True,
+            },
+        }):
+            configured = install_platform_configs(tmp_path, target="zed")
+        assert "Zed" in configured
+        data = json.loads(zed_settings.read_text())
+        assert "context_servers" in data
+        assert "code-review-graph" in data["context_servers"]
+
+    def test_install_continue_config(self, tmp_path):
+        continue_dir = tmp_path / ".continue"
+        continue_dir.mkdir()
+        config_path = continue_dir / "config.json"
+        with patch.dict(PLATFORMS, {
+            "continue": {
+                **PLATFORMS["continue"],
+                "config_path": lambda root: config_path,
+                "detect": lambda: True,
+            },
+        }):
+            configured = install_platform_configs(tmp_path, target="continue")
+        assert "Continue" in configured
+        data = json.loads(config_path.read_text())
+        assert isinstance(data["mcpServers"], list)
+        assert data["mcpServers"][0]["name"] == "code-review-graph"
+        assert data["mcpServers"][0]["type"] == "stdio"
+
+    def test_install_opencode_config(self, tmp_path):
+        configured = install_platform_configs(tmp_path, target="opencode")
+        assert "OpenCode" in configured
+        config_path = tmp_path / ".opencode.json"
+        data = json.loads(config_path.read_text())
+        entry = data["mcpServers"]["code-review-graph"]
+        assert entry["type"] == "stdio"
+        assert entry["env"] == []
+
+    def test_install_all_detected(self, tmp_path):
+        """Installing 'all' configures claude and opencode (always detected)."""
+        configured = install_platform_configs(tmp_path, target="all")
+        assert "Claude Code" in configured
+        assert "OpenCode" in configured
+        assert (tmp_path / ".mcp.json").exists()
+        assert (tmp_path / ".opencode.json").exists()
+
+    def test_merge_existing_servers(self, tmp_path):
+        """Should not overwrite existing MCP servers."""
+        mcp_path = tmp_path / ".mcp.json"
+        existing = {"mcpServers": {"other-server": {"command": "other"}}}
+        mcp_path.write_text(json.dumps(existing))
+        install_platform_configs(tmp_path, target="claude")
+        data = json.loads(mcp_path.read_text())
+        assert "other-server" in data["mcpServers"]
+        assert "code-review-graph" in data["mcpServers"]
+
+    def test_dry_run_no_write(self, tmp_path):
+        configured = install_platform_configs(
+            tmp_path, target="claude", dry_run=True
+        )
+        assert "Claude Code" in configured
+        assert not (tmp_path / ".mcp.json").exists()
+
+    def test_already_configured_skips(self, tmp_path):
+        install_platform_configs(tmp_path, target="claude")
+        configured = install_platform_configs(tmp_path, target="claude")
+        assert "Claude Code" in configured
+
+    def test_continue_array_no_duplicate(self, tmp_path):
+        config_path = tmp_path / ".continue" / "config.json"
+        config_path.parent.mkdir(parents=True)
+        existing = {
+            "mcpServers": [
+                {"name": "code-review-graph", "command": "uvx", "args": ["serve"]}
+            ]
+        }
+        config_path.write_text(json.dumps(existing))
+        with patch.dict(PLATFORMS, {
+            "continue": {
+                **PLATFORMS["continue"],
+                "config_path": lambda root: config_path,
+                "detect": lambda: True,
+            },
+        }):
+            install_platform_configs(tmp_path, target="continue")
+        data = json.loads(config_path.read_text())
+        assert len(data["mcpServers"]) == 1

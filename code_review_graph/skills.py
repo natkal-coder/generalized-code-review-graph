@@ -2,16 +2,171 @@
 
 Generates Claude Code agent skill files, hooks configuration, and
 CLAUDE.md integration for seamless code-review-graph usage.
+Also supports multi-platform MCP server installation.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import platform
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# --- Multi-platform MCP install ---
+
+def _zed_settings_path() -> Path:
+    """Return the Zed settings.json path for the current OS."""
+    if platform.system() == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "Zed" / "settings.json"
+    return Path.home() / ".config" / "zed" / "settings.json"
+
+
+PLATFORMS: dict[str, dict[str, Any]] = {
+    "claude": {
+        "name": "Claude Code",
+        "config_path": lambda root: root / ".mcp.json",
+        "key": "mcpServers",
+        "detect": lambda: True,
+        "format": "object",
+        "needs_type": True,
+    },
+    "cursor": {
+        "name": "Cursor",
+        "config_path": lambda root: root / ".cursor" / "mcp.json",
+        "key": "mcpServers",
+        "detect": lambda: (Path.home() / ".cursor").exists(),
+        "format": "object",
+        "needs_type": True,
+    },
+    "windsurf": {
+        "name": "Windsurf",
+        "config_path": lambda root: Path.home() / ".codeium" / "windsurf" / "mcp_config.json",
+        "key": "mcpServers",
+        "detect": lambda: (Path.home() / ".codeium" / "windsurf").exists(),
+        "format": "object",
+        "needs_type": False,
+    },
+    "zed": {
+        "name": "Zed",
+        "config_path": lambda root: _zed_settings_path(),
+        "key": "context_servers",
+        "detect": lambda: _zed_settings_path().parent.exists(),
+        "format": "object",
+        "needs_type": False,
+    },
+    "continue": {
+        "name": "Continue",
+        "config_path": lambda root: Path.home() / ".continue" / "config.json",
+        "key": "mcpServers",
+        "detect": lambda: (Path.home() / ".continue").exists(),
+        "format": "array",
+        "needs_type": True,
+    },
+    "opencode": {
+        "name": "OpenCode",
+        "config_path": lambda root: root / ".opencode.json",
+        "key": "mcpServers",
+        "detect": lambda: True,
+        "format": "object",
+        "needs_type": True,
+    },
+}
+
+
+def _build_server_entry(plat: dict[str, Any], key: str = "") -> dict[str, Any]:
+    """Build the MCP server entry for a platform."""
+    entry: dict[str, Any] = {
+        "command": "uvx",
+        "args": ["code-review-graph", "serve"],
+    }
+    if plat["needs_type"]:
+        entry["type"] = "stdio"
+    if key == "opencode":
+        entry["env"] = []
+    return entry
+
+
+def install_platform_configs(
+    repo_root: Path,
+    target: str = "all",
+    dry_run: bool = False,
+) -> list[str]:
+    """Install MCP config for one or all detected platforms.
+
+    Args:
+        repo_root: Project root directory.
+        target: Platform key or "all".
+        dry_run: If True, print what would be done without writing.
+
+    Returns:
+        List of platform names that were configured.
+    """
+    if target == "all":
+        platforms_to_install = {
+            k: v for k, v in PLATFORMS.items() if v["detect"]()
+        }
+    else:
+        if target not in PLATFORMS:
+            logger.error("Unknown platform: %s", target)
+            return []
+        platforms_to_install = {target: PLATFORMS[target]}
+
+    configured: list[str] = []
+
+    for key, plat in platforms_to_install.items():
+        config_path: Path = plat["config_path"](repo_root)
+        server_key = plat["key"]
+        server_entry = _build_server_entry(plat, key=key)
+
+        # Read existing config
+        existing: dict[str, Any] = {}
+        if config_path.exists():
+            try:
+                existing = json.loads(config_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                logger.warning("Invalid JSON in %s, will overwrite.", config_path)
+                existing = {}
+
+        if plat["format"] == "array":
+            arr = existing.get(server_key, [])
+            if not isinstance(arr, list):
+                arr = []
+            # Check if already present
+            if any(
+                isinstance(s, dict) and s.get("name") == "code-review-graph"
+                for s in arr
+            ):
+                print(f"  {plat['name']}: already configured in {config_path}")
+                configured.append(plat["name"])
+                continue
+            arr_entry = {"name": "code-review-graph", **server_entry}
+            arr.append(arr_entry)
+            existing[server_key] = arr
+        else:
+            servers = existing.get(server_key, {})
+            if not isinstance(servers, dict):
+                servers = {}
+            if "code-review-graph" in servers:
+                print(f"  {plat['name']}: already configured in {config_path}")
+                configured.append(plat["name"])
+                continue
+            servers["code-review-graph"] = server_entry
+            existing[server_key] = servers
+
+        if dry_run:
+            print(f"  [dry-run] {plat['name']}: would write {config_path}")
+        else:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(json.dumps(existing, indent=2) + "\n")
+            print(f"  {plat['name']}: configured {config_path}")
+
+        configured.append(plat["name"])
+
+    return configured
 
 # --- Skill file contents ---
 

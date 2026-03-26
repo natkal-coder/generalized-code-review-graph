@@ -74,7 +74,7 @@ def _print_banner() -> None:
 {c}  ●──●──●{r}       {d}smarter code reviews{r}
 
   {b}Commands:{r}
-    {g}install{r}     Set up Claude Code integration
+    {g}install{r}     Set up MCP server for AI coding platforms
     {g}init{r}        Alias for install
     {g}build{r}       Full graph build {d}(parse all files){r}
     {g}update{r}      Incremental update {d}(changed files only){r}
@@ -94,57 +94,27 @@ def _print_banner() -> None:
 
 
 def _handle_init(args: argparse.Namespace) -> None:
-    """Set up .mcp.json in the project root for Claude Code integration."""
+    """Set up MCP config for detected AI coding platforms."""
     from .incremental import find_repo_root
+    from .skills import install_platform_configs
 
     repo_root = Path(args.repo) if args.repo else find_repo_root()
     if not repo_root:
         repo_root = Path.cwd()
 
-    mcp_path = repo_root / ".mcp.json"
     dry_run = getattr(args, "dry_run", False)
+    target = getattr(args, "platform", "all") or "all"
 
-    mcp_config = {
-        "mcpServers": {
-            "code-review-graph": {
-                "command": "uvx",
-                "args": ["code-review-graph", "serve"],
-            }
-        }
-    }
+    print("Installing MCP server config...")
+    configured = install_platform_configs(repo_root, target=target, dry_run=dry_run)
 
-    # Merge into existing .mcp.json if present
-    if mcp_path.exists():
-        try:
-            existing = json.loads(mcp_path.read_text())
-            if "code-review-graph" in existing.get("mcpServers", {}):
-                print(f"Already configured in {mcp_path}")
-            else:
-                existing.setdefault("mcpServers", {}).update(mcp_config["mcpServers"])
-                mcp_config = existing
-                if not dry_run:
-                    mcp_path.write_text(json.dumps(mcp_config, indent=2) + "\n")
-                    print(f"Created {mcp_path}")
-        except json.JSONDecodeError:
-            print(f"Warning: existing {mcp_path} has invalid JSON, overwriting.")
-            if not dry_run:
-                mcp_path.write_text(json.dumps(mcp_config, indent=2) + "\n")
-                print(f"Created {mcp_path}")
-        except (KeyError, TypeError):
-            print(f"Warning: existing {mcp_path} has unexpected structure, overwriting.")
-            if not dry_run:
-                mcp_path.write_text(json.dumps(mcp_config, indent=2) + "\n")
-                print(f"Created {mcp_path}")
+    if not configured:
+        print("No platforms detected.")
     else:
-        if not dry_run:
-            mcp_path.write_text(json.dumps(mcp_config, indent=2) + "\n")
-            print(f"Created {mcp_path}")
+        print(f"\nConfigured {len(configured)} platform(s): {', '.join(configured)}")
 
     if dry_run:
-        print(f"[dry-run] Would write to {mcp_path}:")
-        print(json.dumps(mcp_config, indent=2))
-        print()
-        print("[dry-run] No files were modified.")
+        print("\n[dry-run] No files were modified.")
         return
 
     # Handle --skills, --hooks, --all flags
@@ -184,7 +154,7 @@ def main() -> None:
 
     # install (primary) + init (alias)
     install_cmd = sub.add_parser(
-        "install", help="Register MCP server with Claude Code (creates .mcp.json)"
+        "install", help="Register MCP server with AI coding platforms"
     )
     install_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
     install_cmd.add_argument(
@@ -202,6 +172,12 @@ def main() -> None:
     install_cmd.add_argument(
         "--all", action="store_true", dest="install_all",
         help="Install skills, hooks, and CLAUDE.md integration",
+    )
+    install_cmd.add_argument(
+        "--platform",
+        choices=["claude", "cursor", "windsurf", "zed", "continue", "opencode", "all"],
+        default="all",
+        help="Target platform for MCP config (default: all detected)",
     )
 
     init_cmd = sub.add_parser(
@@ -223,6 +199,12 @@ def main() -> None:
     init_cmd.add_argument(
         "--all", action="store_true", dest="install_all",
         help="Install skills, hooks, and CLAUDE.md integration",
+    )
+    init_cmd.add_argument(
+        "--platform",
+        choices=["claude", "cursor", "windsurf", "zed", "continue", "opencode", "all"],
+        default="all",
+        help="Target platform for MCP config (default: all detected)",
     )
 
     # build
