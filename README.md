@@ -25,23 +25,35 @@ Claude Code re-reads your entire codebase on every task. `code-review-graph` fix
 
 ## Quick Start
 
-**Claude Code Plugin** (recommended)
-
-```bash
-claude plugin marketplace add tirth8205/code-review-graph
-claude plugin install code-review-graph@code-review-graph
-```
-
-**pip**
-
 ```bash
 pip install code-review-graph
-code-review-graph install
+code-review-graph install          # auto-detects and configures all supported platforms
+code-review-graph build            # parse your codebase
 ```
 
-Restart Claude Code after either method. Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
+One command sets up everything. `install` detects which AI coding tools you have and writes the correct MCP configuration for each one. Restart your editor/tool after installing.
 
-Then open your project and tell Claude:
+To target a specific platform:
+
+```bash
+code-review-graph install --platform cursor      # configure only Cursor
+code-review-graph install --platform claude-code  # configure only Claude Code
+```
+
+Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
+
+### Supported Platforms
+
+| Platform | Config file | Auto-detected |
+|----------|-------------|:---:|
+| **Claude Code** | `.mcp.json` | Yes |
+| **Cursor** | `.cursor/mcp.json` | Yes |
+| **Windsurf** | `.windsurf/mcp.json` | Yes |
+| **Zed** | `.zed/settings.json` | Yes |
+| **Continue** | `.continue/config.json` | Yes |
+| **OpenCode** | `.opencode/config.json` | Yes |
+
+Then open your project and ask your AI assistant:
 
 ```
 Build the code review graph for this project
@@ -172,7 +184,8 @@ Large repositories benefit most. In the Next.js monorepo (27,732 files, 739K tok
 <br>
 
 ```bash
-code-review-graph install          # Register MCP server with Claude Code
+code-review-graph install          # Auto-detect and configure all platforms
+code-review-graph install --platform <name>  # Target a specific platform
 code-review-graph build            # Parse entire codebase
 code-review-graph update           # Incremental update (changed files only)
 code-review-graph status           # Graph statistics
@@ -301,5 +314,6 @@ MIT. See [LICENSE](LICENSE).
 
 <p align="center">
 <br>
-<code>pip install code-review-graph && code-review-graph install</code>
+<code>pip install code-review-graph && code-review-graph install</code><br>
+<sub>Works with Claude Code, Cursor, Windsurf, Zed, Continue, and OpenCode</sub>
 </p>

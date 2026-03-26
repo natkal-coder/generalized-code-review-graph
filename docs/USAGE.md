@@ -6,11 +6,29 @@
 
 ```bash
 pip install code-review-graph
-code-review-graph install    # creates .mcp.json for Claude Code
+code-review-graph install    # auto-detects and configures all supported platforms
 code-review-graph build      # parse your codebase
 ```
 
-Restart Claude Code to pick up the MCP server.
+`install` detects which AI coding tools you have and writes the correct MCP configuration for each one. Restart your editor/tool after installing.
+
+To target a specific platform instead of auto-detecting all:
+
+```bash
+code-review-graph install --platform cursor
+code-review-graph install --platform claude-code
+```
+
+### Supported Platforms
+
+| Platform | Config file |
+|----------|-------------|
+| **Claude Code** | `.mcp.json` |
+| **Cursor** | `.cursor/mcp.json` |
+| **Windsurf** | `.windsurf/mcp.json` |
+| **Zed** | `.zed/settings.json` |
+| **Continue** | `.continue/config.json` |
+| **OpenCode** | `.opencode/config.json` |
 
 ## Core Workflow
 
