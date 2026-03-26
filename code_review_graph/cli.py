@@ -175,7 +175,7 @@ def main() -> None:
     )
     install_cmd.add_argument(
         "--platform",
-        choices=["claude", "cursor", "windsurf", "zed", "continue", "opencode", "all"],
+        choices=["claude", "cursor", "windsurf", "zed", "continue", "opencode", "antigravity", "all"],
         default="all",
         help="Target platform for MCP config (default: all detected)",
     )
@@ -202,7 +202,7 @@ def main() -> None:
     )
     init_cmd.add_argument(
         "--platform",
-        choices=["claude", "cursor", "windsurf", "zed", "continue", "opencode", "all"],
+        choices=["claude", "cursor", "windsurf", "zed", "continue", "opencode", "antigravity", "all"],
         default="all",
         help="Target platform for MCP config (default: all detected)",
     )

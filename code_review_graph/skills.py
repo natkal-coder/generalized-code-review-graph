@@ -74,6 +74,14 @@ PLATFORMS: dict[str, dict[str, Any]] = {
         "format": "object",
         "needs_type": True,
     },
+    "antigravity": {
+        "name": "Antigravity",
+        "config_path": lambda root: Path.home() / ".gemini" / "antigravity" / "mcp_config.json",
+        "key": "mcpServers",
+        "detect": lambda: (Path.home() / ".gemini" / "antigravity").exists(),
+        "format": "object",
+        "needs_type": False,
+    },
 }
 
 
