@@ -196,7 +196,7 @@ class MiniMaxEmbeddingProvider(EmbeddingProvider):
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                with urllib.request.urlopen(req, timeout=60) as resp:
+                with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310
                     body = _json.loads(resp.read().decode("utf-8"))
 
                 base_resp = body.get("base_resp", {})

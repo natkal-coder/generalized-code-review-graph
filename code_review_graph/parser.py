@@ -1171,7 +1171,11 @@ class CodeParser:
     def _get_params(self, node, language: str, source: bytes) -> Optional[str]:
         """Extract parameter list as a string."""
         for child in node.children:
-            if child.type in ("parameters", "formal_parameters", "parameter_list", "formal_parameter_list"):
+            param_types = (
+                "parameters", "formal_parameters",
+                "parameter_list", "formal_parameter_list",
+            )
+            if child.type in param_types:
                 return child.text.decode("utf-8", errors="replace")
         # Solidity: parameters are direct children between ( and )
         if language == "solidity":
