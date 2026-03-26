@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 import networkx as nx
 
+from .migrations import get_schema_version, run_migrations
 from .parser import EdgeInfo, NodeInfo
 
 # ---------------------------------------------------------------------------
@@ -127,6 +128,15 @@ class GraphStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._init_schema()
+        # Ensure schema_version is set, then run pending migrations
+        if get_schema_version(self._conn) < 1:
+            # Fresh DB — metadata table just created by _init_schema
+            self._conn.execute(
+                "INSERT OR IGNORE INTO metadata (key, value) "
+                "VALUES ('schema_version', '1')"
+            )
+            self._conn.commit()
+        run_migrations(self._conn)
         self._nxg_cache: nx.DiGraph | None = None
         self._cache_lock = threading.Lock()
 

@@ -54,6 +54,8 @@ medium/
 
 # Superpowers brainstorm
 .superpowers/
+docs/superpowers/plans/
+docs/superpowers/specs/
 
 # Diagrams source files (PNGs are tracked, sources are not)
 diagrams/*.excalidraw

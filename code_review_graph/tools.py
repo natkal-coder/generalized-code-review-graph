@@ -1,6 +1,6 @@
 """MCP tool definitions for the Code Review Graph server.
 
-Exposes 9 tools:
+Exposes 22 tools:
 1. build_or_update_graph  - full or incremental build
 2. get_impact_radius      - blast radius from changed files
 3. query_graph            - predefined graph queries
@@ -10,15 +10,34 @@ Exposes 9 tools:
 7. embed_graph            - compute vector embeddings for semantic search
 8. get_docs_section       - token-optimized documentation retrieval
 9. find_large_functions   - find oversized functions/classes by line count
+10. list_flows            - list execution flows sorted by criticality
+11. get_flow              - get details of a single execution flow
+12. get_affected_flows    - find flows affected by changed files
+13. list_communities      - list detected code communities
+14. get_community         - get details of a single community
+15. get_architecture_overview - architecture overview from community structure
+16. detect_changes        - risk-scored change impact analysis for code review
+17. refactor_tool         - unified refactoring (rename preview, dead code, suggestions)
+18. apply_refactor_tool   - apply a previously previewed refactoring
+19. generate_wiki         - generate markdown wiki from community structure
+20. get_wiki_page         - retrieve a specific wiki page
+21. list_repos            - list registered repositories
+22. cross_repo_search     - search across all registered repositories
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
-from .embeddings import EmbeddingStore, embed_all_nodes, semantic_search
+from .changes import analyze_changes, parse_git_diff_ranges
+from .communities import get_architecture_overview, get_communities
+from .embeddings import EmbeddingStore, embed_all_nodes
+from .flows import get_affected_flows as _get_affected_flows
+from .flows import get_flow_by_id, get_flows
 from .graph import GraphStore, edge_to_dict, node_to_dict
+from .hints import generate_hints, get_session
 from .incremental import (
     find_project_root,
     full_build,
@@ -27,6 +46,10 @@ from .incremental import (
     get_staged_and_unstaged,
     incremental_update,
 )
+from .refactor import apply_refactor, find_dead_code, rename_preview, suggest_refactorings
+from .search import hybrid_search
+
+logger = logging.getLogger(__name__)
 
 # Common JS/TS builtin method names filtered from callers_of results.
 # "Who calls .map()?" returns hundreds of hits and is never useful.
@@ -123,7 +146,7 @@ def build_or_update_graph(
     try:
         if full_rebuild:
             result = full_build(root, store)
-            return {
+            build_result = {
                 "status": "ok",
                 "build_type": "full",
                 "summary": (
@@ -141,7 +164,7 @@ def build_or_update_graph(
                     "summary": "No changes detected. Graph is up to date.",
                     **result,
                 }
-            return {
+            build_result = {
                 "status": "ok",
                 "build_type": "incremental",
                 "summary": (
@@ -152,6 +175,69 @@ def build_or_update_graph(
                 ),
                 **result,
             }
+
+        # -- Post-build: compute signatures for nodes that don't have them --
+        try:
+            rows = store._conn.execute(
+                "SELECT id, name, kind, params, return_type "
+                "FROM nodes WHERE signature IS NULL"
+            ).fetchall()
+            for row in rows:
+                node_id, name, kind, params, ret = (
+                    row[0], row[1], row[2], row[3], row[4],
+                )
+                if kind in ("Function", "Test"):
+                    sig = f"def {name}({params or ''})"
+                    if ret:
+                        sig += f" -> {ret}"
+                elif kind == "Class":
+                    sig = f"class {name}"
+                else:
+                    sig = name
+                store._conn.execute(
+                    "UPDATE nodes SET signature = ? WHERE id = ?",
+                    (sig[:512], node_id),
+                )
+            store._conn.commit()
+        except Exception as e:
+            logger.warning("Signature computation failed: %s", e)
+
+        # -- Post-build: rebuild FTS index --
+        try:
+            from code_review_graph.search import rebuild_fts_index
+
+            fts_count = rebuild_fts_index(store)
+            build_result["fts_indexed"] = fts_count
+        except Exception as e:
+            logger.warning("FTS index rebuild failed: %s", e)
+
+        # -- Post-build: trace execution flows --
+        try:
+            from code_review_graph.flows import store_flows as _store_flows
+            from code_review_graph.flows import trace_flows as _trace_flows
+
+            flows = _trace_flows(store)
+            count = _store_flows(store, flows)
+            build_result["flows_detected"] = count
+        except Exception as e:
+            logger.warning("Flow detection failed: %s", e)
+
+        # -- Post-build: detect communities --
+        try:
+            from code_review_graph.communities import (
+                detect_communities as _detect_communities,
+            )
+            from code_review_graph.communities import (
+                store_communities as _store_communities,
+            )
+
+            comms = _detect_communities(store)
+            count = _store_communities(store, comms)
+            build_result["communities_detected"] = count
+        except Exception as e:
+            logger.warning("Community detection failed: %s", e)
+
+        return build_result
     finally:
         store.close()
 
@@ -603,74 +689,48 @@ def semantic_search_nodes(
     kind: str | None = None,
     limit: int = 20,
     repo_root: str | None = None,
+    context_files: list[str] | None = None,
 ) -> dict[str, Any]:
     """Search for nodes by name, keyword, or semantic similarity.
 
-    Uses vector embeddings for semantic search if available (install with
-    `pip install code-review-graph[embeddings]`). Falls back to keyword
-    matching otherwise.
+    Uses hybrid search (FTS5 BM25 + vector embeddings merged via Reciprocal
+    Rank Fusion) as the primary search path, with graceful fallback to
+    keyword matching.
 
     Args:
         query: Search string to match against node names and qualified names.
         kind: Optional filter by node kind (File, Class, Function, Type, Test).
         limit: Maximum results to return (default: 20).
         repo_root: Repository root path. Auto-detected if omitted.
+        context_files: Optional list of file paths. Nodes in these files
+            receive a relevance boost.
 
     Returns:
         Ranked list of matching nodes.
     """
     store, root = _get_store(repo_root)
     try:
-        db_path = get_db_path(root)
-        emb_store = EmbeddingStore(db_path)
-        search_mode = "keyword"
+        results = hybrid_search(
+            store, query, kind=kind, limit=limit, context_files=context_files,
+        )
 
-        try:
-            if emb_store.available and emb_store.count() > 0:
-                # Vector search
-                search_mode = "semantic"
-                raw = semantic_search(query, store, emb_store, limit=limit * 2)
-                if kind:
-                    raw = [r for r in raw if r.get("kind") == kind]
-                raw = raw[:limit]
-                return {
-                    "status": "ok",
-                    "query": query,
-                    "search_mode": search_mode,
-                    "summary": f"Found {len(raw)} node(s) matching '{query}' via semantic search"
-                    + (f" (kind={kind})" if kind else ""),
-                    "results": raw,
-                }
-        finally:
-            emb_store.close()
+        search_mode = "hybrid"
+        if not results:
+            search_mode = "keyword"
 
-        # Keyword fallback
-        results = store.search_nodes(query, limit=limit * 2)
-
-        if kind:
-            results = [r for r in results if r.kind == kind]
-
-        def score(node):
-            name_lower = node.name.lower()
-            q_lower = query.lower()
-            if name_lower == q_lower:
-                return 0
-            if name_lower.startswith(q_lower):
-                return 1
-            return 2
-
-        results.sort(key=score)
-        results = results[:limit]
-
-        return {
+        result: dict[str, object] = {
             "status": "ok",
             "query": query,
             "search_mode": search_mode,
             "summary": f"Found {len(results)} node(s) matching '{query}'" + (
                 f" (kind={kind})" if kind else ""
             ),
-            "results": [node_to_dict(r) for r in results],
+            "results": results,
         }
+        result["_hints"] = generate_hints(
+            "semantic_search_nodes", result, get_session()
+        )
+        return result
     finally:
         store.close()
 
@@ -920,3 +980,778 @@ def find_large_functions(
         }
     finally:
         store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 10: list_flows  [EXPLORE]
+# ---------------------------------------------------------------------------
+
+
+def list_flows(
+    repo_root: str | None = None,
+    sort_by: str = "criticality",
+    limit: int = 50,
+    kind: str | None = None,
+) -> dict[str, Any]:
+    """List execution flows in the codebase, sorted by criticality.
+
+    [EXPLORE] Retrieves stored execution flows from the knowledge graph.
+    Each flow represents a call chain starting from an entry point
+    (e.g. HTTP handler, CLI command, test function).
+
+    Args:
+        repo_root: Repository root path. Auto-detected if omitted.
+        sort_by: Sort column: criticality, depth, node_count, file_count, or name.
+        limit: Maximum flows to return (default: 50).
+        kind: Optional filter by entry point kind (e.g. "Test", "Function").
+
+    Returns:
+        List of flows with criticality scores.
+    """
+    store, root = _get_store(repo_root)
+    try:
+        fetch_limit = limit if not kind else limit * 10  # fetch more when filtering
+        flows = get_flows(store, sort_by=sort_by, limit=fetch_limit)
+
+        if kind:
+            filtered = []
+            for f in flows:
+                ep_id = f.get("entry_point_id")
+                if ep_id is not None:
+                    row = store._conn.execute(
+                        "SELECT kind FROM nodes WHERE id = ?", (ep_id,)
+                    ).fetchone()
+                    if row and row["kind"] == kind:
+                        filtered.append(f)
+            flows = filtered[:limit]
+
+        result: dict[str, object] = {
+            "status": "ok",
+            "summary": f"Found {len(flows)} execution flow(s)",
+            "flows": flows,
+        }
+        result["_hints"] = generate_hints("list_flows", result, get_session())
+        return result
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 11: get_flow  [EXPLORE]
+# ---------------------------------------------------------------------------
+
+
+def get_flow(
+    flow_id: int | None = None,
+    flow_name: str | None = None,
+    include_source: bool = False,
+    repo_root: str | None = None,
+) -> dict[str, Any]:
+    """Get details of a single execution flow.
+
+    [EXPLORE] Retrieves full path details for a flow, including each step's
+    function name, file, and line numbers.  Optionally includes source
+    snippets for every step in the path.
+
+    Args:
+        flow_id: Database ID of the flow (from list_flows).
+        flow_name: Name to search for (partial match). Ignored if flow_id given.
+        include_source: If True, include source code snippets for each step.
+        repo_root: Repository root path. Auto-detected if omitted.
+
+    Returns:
+        Flow details with steps, or not_found status.
+    """
+    store, root = _get_store(repo_root)
+    try:
+        flow: dict | None = None
+
+        if flow_id is not None:
+            flow = get_flow_by_id(store, flow_id)
+        elif flow_name is not None:
+            # Search flows by name match
+            all_flows = get_flows(store, sort_by="criticality", limit=500)
+            for f in all_flows:
+                if flow_name.lower() in f["name"].lower():
+                    flow = get_flow_by_id(store, f["id"])
+                    break
+
+        if flow is None:
+            return {
+                "status": "not_found",
+                "summary": "No flow found matching the given criteria.",
+            }
+
+        # Optionally include source snippets for each step
+        if include_source and "steps" in flow:
+            for step in flow["steps"]:
+                fp = Path(step["file"]) if step.get("file") else None
+                if fp is not None and not fp.is_absolute():
+                    fp = root / fp
+                file_path = fp
+                if file_path and file_path.is_file():
+                    try:
+                        lines = file_path.read_text(errors="replace").splitlines()
+                        start = max(0, (step.get("line_start") or 1) - 1)
+                        end = min(len(lines), step.get("line_end") or len(lines))
+                        step["source"] = "\n".join(
+                            f"{i + 1}: {lines[i]}" for i in range(start, end)
+                        )
+                    except (OSError, UnicodeDecodeError):
+                        step["source"] = "(could not read file)"
+
+        result = {
+            "status": "ok",
+            "summary": (
+                f"Flow '{flow['name']}': {flow['node_count']} nodes, "
+                f"depth {flow['depth']}, criticality {flow['criticality']:.4f}"
+            ),
+            "flow": flow,
+        }
+        result["_hints"] = generate_hints("get_flow", result, get_session())
+        return result
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 12: get_affected_flows  [REVIEW]
+# ---------------------------------------------------------------------------
+
+
+def get_affected_flows_func(
+    changed_files: list[str] | None = None,
+    base: str = "HEAD~1",
+    repo_root: str | None = None,
+) -> dict[str, Any]:
+    """Find execution flows affected by changed files.
+
+    [REVIEW] Identifies which execution flows pass through nodes in the
+    changed files.  Useful during code review to understand which user-facing
+    or critical paths are affected by a change.
+
+    Args:
+        changed_files: List of changed file paths (relative to repo root).
+                       Auto-detected from git diff if omitted.
+        base: Git ref for auto-detecting changes (default: HEAD~1).
+        repo_root: Repository root path. Auto-detected if omitted.
+
+    Returns:
+        Affected flows sorted by criticality, with step details.
+    """
+    store, root = _get_store(repo_root)
+    try:
+        if changed_files is None:
+            changed_files = get_changed_files(root, base)
+            if not changed_files:
+                changed_files = get_staged_and_unstaged(root)
+
+        if not changed_files:
+            return {
+                "status": "ok",
+                "summary": "No changed files detected.",
+                "affected_flows": [],
+                "total": 0,
+            }
+
+        # Convert to absolute paths for graph lookup
+        abs_files = [str(root / f) for f in changed_files]
+        result = _get_affected_flows(store, abs_files)
+
+        total = result["total"]
+        out = {
+            "status": "ok",
+            "summary": f"{total} flow(s) affected by changes in {len(changed_files)} file(s)",
+            "changed_files": changed_files,
+            "affected_flows": result["affected_flows"],
+            "total": total,
+        }
+        out["_hints"] = generate_hints("get_affected_flows", out, get_session())
+        return out
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 13: list_communities  [EXPLORE]
+# ---------------------------------------------------------------------------
+
+
+def list_communities_func(
+    repo_root: str | None = None,
+    sort_by: str = "size",
+    min_size: int = 0,
+) -> dict[str, Any]:
+    """List detected code communities in the codebase.
+
+    [EXPLORE] Retrieves stored communities from the knowledge graph.
+    Each community represents a cluster of related code entities
+    (functions, classes) detected via the Leiden algorithm or
+    file-based grouping.
+
+    Args:
+        repo_root: Repository root path. Auto-detected if omitted.
+        sort_by: Sort column: size, cohesion, or name.
+        min_size: Minimum community size to include (default: 0).
+
+    Returns:
+        List of communities with size and cohesion scores.
+    """
+    store, root = _get_store(repo_root)
+    try:
+        communities = get_communities(store, sort_by=sort_by, min_size=min_size)
+        result: dict[str, object] = {
+            "status": "ok",
+            "summary": f"Found {len(communities)} communities",
+            "communities": communities,
+        }
+        result["_hints"] = generate_hints("list_communities", result, get_session())
+        return result
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 14: get_community  [EXPLORE]
+# ---------------------------------------------------------------------------
+
+
+def get_community_func(
+    community_name: str | None = None,
+    community_id: int | None = None,
+    include_members: bool = False,
+    repo_root: str | None = None,
+) -> dict[str, Any]:
+    """Get details of a single code community.
+
+    [EXPLORE] Retrieves a community by its database ID or by name match.
+    Optionally includes the full list of member nodes.
+
+    Args:
+        community_name: Name to search for (partial match). Ignored if community_id given.
+        community_id: Database ID of the community.
+        include_members: If True, include full member node details.
+        repo_root: Repository root path. Auto-detected if omitted.
+
+    Returns:
+        Community details, or not_found status.
+    """
+    store, root = _get_store(repo_root)
+    try:
+        community: dict | None = None
+        all_communities = get_communities(store)
+
+        if community_id is not None:
+            for c in all_communities:
+                if c.get("id") == community_id:
+                    community = c
+                    break
+        elif community_name is not None:
+            for c in all_communities:
+                if community_name.lower() in c["name"].lower():
+                    community = c
+                    break
+
+        if community is None:
+            return {
+                "status": "not_found",
+                "summary": "No community found matching the given criteria.",
+            }
+
+        if include_members:
+            cid = community.get("id")
+            if cid is not None:
+                rows = store._conn.execute(
+                    "SELECT * FROM nodes WHERE community_id = ?", (cid,)
+                ).fetchall()
+                members = [node_to_dict(store._row_to_node(row)) for row in rows]
+                community["member_details"] = members
+
+        result = {
+            "status": "ok",
+            "summary": (
+                f"Community '{community['name']}': {community['size']} nodes, "
+                f"cohesion {community['cohesion']:.4f}"
+            ),
+            "community": community,
+        }
+        result["_hints"] = generate_hints("get_community", result, get_session())
+        return result
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 15: get_architecture_overview  [EXPLORE]
+# ---------------------------------------------------------------------------
+
+
+def get_architecture_overview_func(
+    repo_root: str | None = None,
+) -> dict[str, Any]:
+    """Generate an architecture overview based on community structure.
+
+    [EXPLORE] Builds a high-level view of the codebase architecture by
+    analyzing community boundaries and cross-community coupling.
+    Includes warnings for high coupling between communities.
+
+    Args:
+        repo_root: Repository root path. Auto-detected if omitted.
+
+    Returns:
+        Architecture overview with communities, cross-community edges, and warnings.
+    """
+    store, root = _get_store(repo_root)
+    try:
+        overview = get_architecture_overview(store)
+        n_communities = len(overview["communities"])
+        n_cross = len(overview["cross_community_edges"])
+        n_warnings = len(overview["warnings"])
+        result = {
+            "status": "ok",
+            "summary": (
+                f"Architecture: {n_communities} communities, "
+                f"{n_cross} cross-community edges, {n_warnings} warning(s)"
+            ),
+            **overview,
+        }
+        result["_hints"] = generate_hints(
+            "get_architecture_overview", result, get_session()
+        )
+        return result
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 16: detect_changes  [REVIEW]
+# ---------------------------------------------------------------------------
+
+
+def detect_changes_func(
+    base: str = "HEAD~1",
+    changed_files: list[str] | None = None,
+    include_source: bool = False,
+    max_depth: int = 2,
+    repo_root: str | None = None,
+) -> dict[str, Any]:
+    """Detect changes and produce risk-scored review guidance.
+
+    [REVIEW] Primary tool for code review.  Maps git diffs to affected
+    functions, flows, communities, and test coverage gaps.  Returns
+    priority-ordered review guidance with risk scores.
+
+    Args:
+        base: Git ref to diff against (default: HEAD~1).
+        changed_files: Explicit list of changed file paths (relative to repo
+            root).  Auto-detected from git diff if omitted.
+        include_source: If True, include source code snippets for changed
+            functions.  Default: False.
+        max_depth: Impact radius depth for BFS traversal.  Default: 2.
+        repo_root: Repository root path.  Auto-detected if omitted.
+
+    Returns:
+        Risk-scored analysis with changed functions, affected flows,
+        test gaps, and review priorities.
+    """
+    store, root = _get_store(repo_root)
+    try:
+        # Detect changed files if not provided.
+        if changed_files is None:
+            changed_files = get_changed_files(root, base)
+            if not changed_files:
+                changed_files = get_staged_and_unstaged(root)
+
+        if not changed_files:
+            return {
+                "status": "ok",
+                "summary": "No changed files detected.",
+                "risk_score": 0.0,
+                "changed_functions": [],
+                "affected_flows": [],
+                "test_gaps": [],
+                "review_priorities": [],
+            }
+
+        # Convert to absolute paths for graph lookup.
+        abs_files = [str(root / f) for f in changed_files]
+
+        # Parse diff ranges for line-level mapping.
+        diff_ranges = parse_git_diff_ranges(str(root), base)
+        # Remap to absolute paths so they match graph file_paths.
+        abs_ranges: dict[str, list[tuple[int, int]]] = {}
+        for rel_path, ranges in diff_ranges.items():
+            abs_path = str(root / rel_path)
+            abs_ranges[abs_path] = ranges
+
+        analysis = analyze_changes(
+            store,
+            changed_files=abs_files,
+            changed_ranges=abs_ranges if abs_ranges else None,
+            repo_root=str(root),
+            base=base,
+        )
+
+        # Optionally include source snippets for changed functions.
+        if include_source:
+            for func in analysis.get("changed_functions", []):
+                fp = func.get("file_path")
+                ls = func.get("line_start")
+                le = func.get("line_end")
+                if fp and ls and le:
+                    file_path = Path(fp)
+                    if file_path.is_file():
+                        try:
+                            lines = file_path.read_text(errors="replace").splitlines()
+                            start = max(0, ls - 1)
+                            end = min(len(lines), le)
+                            func["source"] = "\n".join(
+                                f"{i + 1}: {lines[i]}" for i in range(start, end)
+                            )
+                        except (OSError, UnicodeDecodeError):
+                            func["source"] = "(could not read file)"
+
+        result = {
+            "status": "ok",
+            "changed_files": changed_files,
+            **analysis,
+        }
+        result["_hints"] = generate_hints("detect_changes", result, get_session())
+        return result
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 17: refactor_tool  [REFACTOR]
+# ---------------------------------------------------------------------------
+
+
+def refactor_func(
+    mode: str = "rename",
+    old_name: str | None = None,
+    new_name: str | None = None,
+    kind: str | None = None,
+    file_pattern: str | None = None,
+    repo_root: str | None = None,
+) -> dict[str, Any]:
+    """Unified refactoring entry point.
+
+    [REFACTOR] Supports three modes:
+    - ``rename``: Preview renaming a symbol (requires *old_name* and *new_name*).
+    - ``dead_code``: Find unreferenced functions/classes.
+    - ``suggest``: Get community-driven refactoring suggestions.
+
+    Args:
+        mode: One of ``"rename"``, ``"dead_code"``, or ``"suggest"``.
+        old_name: (rename mode) Current symbol name.
+        new_name: (rename mode) Desired new name.
+        kind: (dead_code mode) Optional node kind filter.
+        file_pattern: (dead_code mode) Optional file path substring filter.
+        repo_root: Repository root path. Auto-detected if omitted.
+
+    Returns:
+        Mode-specific results dict.
+    """
+    valid_modes = {"rename", "dead_code", "suggest"}
+    if mode not in valid_modes:
+        return {
+            "status": "error",
+            "error": (
+                f"Invalid mode '{mode}'. "
+                f"Must be one of: {', '.join(sorted(valid_modes))}"
+            ),
+        }
+
+    store, root = _get_store(repo_root)
+    try:
+        if mode == "rename":
+            if not old_name or not new_name:
+                return {
+                    "status": "error",
+                    "error": "rename mode requires both old_name and new_name.",
+                }
+            preview = rename_preview(store, old_name, new_name)
+            if preview is None:
+                return {
+                    "status": "not_found",
+                    "summary": f"No node found matching '{old_name}'.",
+                }
+            result = {
+                "status": "ok",
+                "summary": (
+                    f"Rename preview: {old_name} -> {new_name}, "
+                    f"{len(preview['edits'])} edit(s). "
+                    f"Use apply_refactor_tool(refactor_id="
+                    f"'{preview['refactor_id']}') to apply."
+                ),
+                **preview,
+            }
+            result["_hints"] = generate_hints("refactor", result, get_session())
+            return result
+
+        elif mode == "dead_code":
+            dead = find_dead_code(store, kind=kind, file_pattern=file_pattern)
+            result = {
+                "status": "ok",
+                "summary": f"Found {len(dead)} dead code symbol(s).",
+                "dead_code": dead,
+                "total": len(dead),
+            }
+            result["_hints"] = generate_hints("refactor", result, get_session())
+            return result
+
+        else:  # suggest
+            suggestions = suggest_refactorings(store)
+            result = {
+                "status": "ok",
+                "summary": (
+                    f"Generated {len(suggestions)} refactoring suggestion(s)."
+                ),
+                "suggestions": suggestions,
+                "total": len(suggestions),
+            }
+            result["_hints"] = generate_hints("refactor", result, get_session())
+            return result
+
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 18: apply_refactor_tool  [REFACTOR]
+# ---------------------------------------------------------------------------
+
+
+def apply_refactor_func(
+    refactor_id: str,
+    repo_root: str | None = None,
+) -> dict[str, Any]:
+    """Apply a previously previewed refactoring to source files.
+
+    [REFACTOR] Validates the refactor_id, checks expiry, ensures all edit
+    paths are within the repo root, then performs exact string replacements.
+
+    Args:
+        refactor_id: ID returned by a prior ``refactor_tool(mode="rename")``
+            call.
+        repo_root: Repository root path. Auto-detected if omitted.
+
+    Returns:
+        Status with count of applied edits and modified files.
+    """
+    try:
+        root = (
+            _validate_repo_root(Path(repo_root))
+            if repo_root
+            else find_project_root()
+        )
+    except (RuntimeError, ValueError) as exc:
+        return {"status": "error", "error": str(exc)}
+
+    result = apply_refactor(refactor_id, root)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tool 19: generate_wiki  [DOCS]
+# ---------------------------------------------------------------------------
+
+
+def generate_wiki_func(
+    repo_root: str | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Generate a markdown wiki from the community structure.
+
+    [DOCS] Creates a wiki page for each detected community and an index
+    page. Pages are written to ``.code-review-graph/wiki/`` inside the
+    repository. Only regenerates pages whose content has changed unless
+    force=True.
+
+    Args:
+        repo_root: Repository root path. Auto-detected if omitted.
+        force: If True, regenerate all pages even if content is unchanged.
+
+    Returns:
+        Status with pages_generated, pages_updated, pages_unchanged counts.
+    """
+    from .wiki import generate_wiki
+
+    store, root = _get_store(repo_root)
+    try:
+        wiki_dir = root / ".code-review-graph" / "wiki"
+        result = generate_wiki(store, wiki_dir, force=force)
+        total = result["pages_generated"] + result["pages_updated"] + result["pages_unchanged"]
+        return {
+            "status": "ok",
+            "summary": (
+                f"Wiki generated: {result['pages_generated']} new, "
+                f"{result['pages_updated']} updated, "
+                f"{result['pages_unchanged']} unchanged "
+                f"({total} total pages)"
+            ),
+            "wiki_dir": str(wiki_dir),
+            **result,
+        }
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 20: get_wiki_page  [DOCS]
+# ---------------------------------------------------------------------------
+
+
+def get_wiki_page_func(
+    community_name: str,
+    repo_root: str | None = None,
+) -> dict[str, Any]:
+    """Retrieve a specific wiki page by community name.
+
+    [DOCS] Returns the markdown content of the wiki page for the given
+    community. The wiki must have been generated first via generate_wiki.
+
+    Args:
+        community_name: Community name to look up (slugified for filename).
+        repo_root: Repository root path. Auto-detected if omitted.
+
+    Returns:
+        Page content or not_found status.
+    """
+    from .wiki import get_wiki_page
+
+    _, root = _get_store(repo_root)
+    wiki_dir = root / ".code-review-graph" / "wiki"
+    content = get_wiki_page(wiki_dir, community_name)
+    if content is None:
+        return {
+            "status": "not_found",
+            "summary": f"No wiki page found for '{community_name}'.",
+        }
+    return {
+        "status": "ok",
+        "summary": f"Wiki page for '{community_name}' ({len(content)} chars)",
+        "content": content,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool 21: list_repos  [REGISTRY]
+# ---------------------------------------------------------------------------
+
+
+def list_repos_func() -> dict[str, Any]:
+    """List all registered repositories.
+
+    [REGISTRY] Returns the list of repositories registered in the global
+    multi-repo registry at ``~/.code-review-graph/registry.json``.
+
+    Returns:
+        List of registered repos with paths and aliases.
+    """
+    from .registry import Registry
+
+    try:
+        registry = Registry()
+        repos = registry.list_repos()
+        return {
+            "status": "ok",
+            "summary": f"{len(repos)} registered repository(ies)",
+            "repos": repos,
+        }
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Tool 22: cross_repo_search  [REGISTRY]
+# ---------------------------------------------------------------------------
+
+
+def cross_repo_search_func(
+    query: str,
+    kind: str | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Search across all registered repositories.
+
+    [REGISTRY] Runs hybrid_search on each registered repo's graph database
+    and merges the results.
+
+    Args:
+        query: Search query string.
+        kind: Optional node kind filter (e.g. "Function", "Class").
+        limit: Maximum results per repo (default: 20).
+
+    Returns:
+        Combined search results from all registered repos.
+    """
+    from .registry import Registry
+
+    try:
+        registry = Registry()
+        repos = registry.list_repos()
+        if not repos:
+            return {
+                "status": "ok",
+                "summary": "No repositories registered. Use 'register' to add repos.",
+                "results": [],
+            }
+
+        all_results: list[dict[str, Any]] = []
+        searched_repos: list[str] = []
+
+        for repo_entry in repos:
+            repo_path = Path(repo_entry["path"])
+            db_path = repo_path / ".code-review-graph" / "graph.db"
+            if not db_path.exists():
+                continue
+
+            try:
+                store = GraphStore(str(db_path))
+                try:
+                    results = hybrid_search(store, query, kind=kind, limit=limit)
+                    alias = repo_entry.get("alias", repo_path.name)
+                    for r in results:
+                        r["repo"] = alias
+                        r["repo_path"] = str(repo_path)
+                    all_results.extend(results)
+                    searched_repos.append(alias)
+                finally:
+                    store.close()
+            except Exception as exc:
+                logger.warning("Search failed for %s: %s", repo_path, exc)
+
+        # Sort all results by score descending
+        all_results.sort(key=lambda r: r.get("score", 0), reverse=True)
+
+        return {
+            "status": "ok",
+            "summary": (
+                f"Found {len(all_results)} result(s) across "
+                f"{len(searched_repos)} repo(s) for '{query}'"
+            ),
+            "results": all_results[:limit],
+            "repos_searched": searched_repos,
+        }
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}

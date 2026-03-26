@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "code-review-graph"
-version = "1.8.4"
+version = "2.0.0"
 description = "Persistent incremental knowledge graph for token-efficient, context-aware code reviews with Claude Code"
 readme = {file = "README.md", content-type = "text/markdown"}
 license = "MIT"
@@ -50,6 +50,21 @@ embeddings = [
 ]
 google-embeddings = [
     "google-generativeai>=0.8.0,<1",
+]
+communities = [
+    "igraph>=0.11.0",
+]
+eval = [
+    "matplotlib>=3.7.0",
+]
+wiki = [
+    "ollama>=0.1.0",
+]
+all = [
+    "code-review-graph[embeddings]",
+    "code-review-graph[communities]",
+    "code-review-graph[eval]",
+    "code-review-graph[wiki]",
 ]
 dev = [
     "pytest>=8.0,<9",

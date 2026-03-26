@@ -198,3 +198,40 @@ def test_generate_html_overwrites(store_with_data, tmp_path):
     content = output_path.read_text()
     assert "old content" not in content
     assert "<!DOCTYPE html>" in content
+
+
+def test_export_includes_flows(store_with_data):
+    """Export data should include a 'flows' key (list, possibly empty)."""
+    from code_review_graph.visualization import export_graph_data
+
+    data = export_graph_data(store_with_data)
+    assert "flows" in data
+    assert isinstance(data["flows"], list)
+
+
+def test_export_includes_communities(store_with_data):
+    """Export data should include a 'communities' key (list, possibly empty)."""
+    from code_review_graph.visualization import export_graph_data
+
+    data = export_graph_data(store_with_data)
+    assert "communities" in data
+    assert isinstance(data["communities"], list)
+
+
+def test_generate_html_includes_interactive_features(store_with_data, tmp_path):
+    """Generated HTML should include new interactive features."""
+    from code_review_graph.visualization import generate_html
+
+    output_path = tmp_path / "graph.html"
+    generate_html(store_with_data, output_path)
+    content = output_path.read_text()
+    # Detail panel
+    assert "detail-panel" in content
+    # Community coloring button
+    assert "btn-community" in content
+    # Flow dropdown
+    assert "flow-select" in content
+    # Filter panel
+    assert "filter-panel" in content
+    # Search results dropdown
+    assert "search-results" in content
