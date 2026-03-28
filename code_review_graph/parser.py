@@ -1602,6 +1602,7 @@ class CodeParser:
             for child in node.children:
                 if child.type == "method":
                     return child.text.decode("utf-8", errors="replace")
+            return None  # method child not found
 
         # Simple call: func_name(args)
         if first.type == "identifier":

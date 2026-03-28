@@ -643,7 +643,9 @@ class TestPerlParsing:
 
     def test_finds_calls(self):
         calls = [e for e in self.edges if e.kind == "CALLS"]
-        assert len(calls) >= 1
+        targets = {e.target for e in calls}
+        assert any(t == "speak" or t.endswith("::speak") for t in targets)  # $self->speak() — method_call_expression
+        assert "bless" in targets  # ambiguous_function_call_expression
 
     def test_finds_contains(self):
         contains = [e for e in self.edges if e.kind == "CONTAINS"]
@@ -677,8 +679,9 @@ class TestXSParsing:
 
     def test_finds_calls(self):
         calls = [e for e in self.edges if e.kind == "CALLS"]
-        assert len(calls) >= 1
+        targets = {e.target for e in calls}
+        assert any(t == "_add" or t.endswith("::_add") for t in targets)  # compute_distance calls _add
 
     def test_finds_contains(self):
         contains = [e for e in self.edges if e.kind == "CONTAINS"]
-        assert len(contains) >= 2
+        assert len(contains) >= 3  # Point, _add, compute_distance
