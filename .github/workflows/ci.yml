@@ -49,6 +49,28 @@ jobs:
       - name: Run bandit security scan
         run: bandit -r code_review_graph/ -c pyproject.toml
 
+  schema-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Python/VSCode schema versions match
+        run: |
+          PY_VER=$(grep -oP 'LATEST_VERSION\s*=\s*max\(MIGRATIONS\.keys\(\)\)' code_review_graph/migrations.py > /dev/null && python3 -c "
+          import re, ast
+          src = open('code_review_graph/migrations.py').read()
+          m = re.search(r'MIGRATIONS:\s*dict\[.*?\]\s*=\s*\{([^}]+)\}', src)
+          keys = [int(k.strip().rstrip(':')) for k in re.findall(r'(\d+):', m.group(1))]
+          print(max(keys))
+          ")
+          TS_VER=$(grep -oP 'SUPPORTED_SCHEMA_VERSION\s*=\s*\K\d+' code-review-graph-vscode/src/backend/sqlite.ts)
+          echo "Python LATEST_VERSION: $PY_VER"
+          echo "VSCode SUPPORTED_SCHEMA_VERSION: $TS_VER"
+          if [ "$PY_VER" != "$TS_VER" ]; then
+            echo "::error::Schema version mismatch! Python=$PY_VER, VSCode=$TS_VER"
+            exit 1
+          fi
+          echo "Schema versions in sync."
+
   test:
     runs-on: ubuntu-latest
     strategy:
