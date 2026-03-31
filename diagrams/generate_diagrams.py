@@ -199,7 +199,7 @@ def d2():
 
     boxes = [
         ("Repository",       "your code",              BLU_BG, BLU, 60),
-        ("Tree-sitter Parser","18 languages",           ORG_BG, ORG, 380),
+        ("Tree-sitter Parser","19 languages + notebooks", ORG_BG, ORG, 380),
         ("SQLite Graph",     "nodes + edges\nflows + communities",  PRP_BG, PRP, 700),
         ("Blast Radius",     "BFS traversal",           YLW_BG, YLW, 1020),
         ("Minimal Review Set","only what matters",        GRN_BG, GRN, 1380),
@@ -506,6 +506,184 @@ def d6():
 
 
 # ════════════════════════════════════════════
+# DIAGRAM 7 — MCP Integration Flow
+# ════════════════════════════════════════════
+def d7():
+    els = []
+    els.append(TC(700, 20, "How Claude Code Uses the Graph", 36))
+
+    # ── Step boxes (vertical flow) ──
+    bw, bh = 320, 65
+    sx = 100
+    rx = 550  # right column for annotations
+
+    # Step 1: User asks
+    y = 90
+    els.append(R(sx, y, bw, bh, bg=BLU_BG, fs="solid", sc=BLU))
+    els.append(TC(sx+bw/2, y+10, "User", 22, sc=BLU))
+    els.append(TC(sx+bw/2, y+38, '"Review my changes"', 14, sc=GRY))
+
+    els.append(A(sx+bw/2, y+bh+5, [[0,0],[0,30]], sc=GRY))
+
+    # Step 2: Claude Code
+    y = 200
+    els.append(R(sx, y, bw, bh, bg=PRP_BG, fs="solid", sc=PRP))
+    els.append(TC(sx+bw/2, y+10, "Claude Code", 22, sc=PRP))
+    els.append(TC(sx+bw/2, y+38, "checks MCP tools", 14, sc=GRY))
+
+    # Right annotation: what Claude looks for
+    els.append(R(rx, y-5, 380, 75, bg="#f8f9fa", fs="solid", sc=GRY, op=60))
+    els.append(T(rx+15, y+5, "Skills tell Claude:", 14, sc=GRY))
+    els.append(T(rx+15, y+25, '"Use get_review_context before\n scanning files manually"', 13, sc=PRP))
+
+    els.append(A(sx+bw/2, y+bh+5, [[0,0],[0,30]], sc=PRP))
+
+    # Step 3: MCP call
+    y = 310
+    els.append(R(sx, y, bw, bh, bg=ORG_BG, fs="solid", sc=ORG))
+    els.append(TC(sx+bw/2, y+10, "MCP Server", 22, sc=ORG))
+    els.append(TC(sx+bw/2, y+38, "code-review-graph serve", 13, sc=GRY))
+
+    # Right annotation: what gets called
+    els.append(R(rx, y-5, 380, 75, bg="#fff4e6", fs="solid", sc=ORG, op=60))
+    els.append(T(rx+15, y+5, "22 tools available:", 14, sc=ORG))
+    els.append(T(rx+15, y+25, "detect_changes \u2192 get_review_context\n\u2192 get_impact_radius \u2192 query_graph", 13, sc=ORG))
+
+    els.append(A(sx+bw/2, y+bh+5, [[0,0],[0,30]], sc=ORG))
+
+    # Step 4: Graph query
+    y = 420
+    els.append(D(sx+bw/2-50, y, 100, 65, bg=GRN_BG, fs="solid", sc=GRN))
+    els.append(TC(sx+bw/2, y+18, "graph.db", 16, sc=GRN))
+
+    # Right annotation: what gets returned
+    els.append(R(rx, y-5, 380, 75, bg="#ebfbee", fs="solid", sc=GRN, op=60))
+    els.append(T(rx+15, y+5, "Returns:", 14, sc=GRN))
+    els.append(T(rx+15, y+25, "Blast radius, affected flows,\ntest gaps, risk scores", 13, sc=GRN))
+
+    els.append(A(sx+bw/2, y+65+5, [[0,0],[0,30]], sc=GRN))
+
+    # Step 5: Claude responds
+    y = 530
+    els.append(R(sx, y, bw, bh, bg=GRN_BG, fs="solid", sc=GRN))
+    els.append(TC(sx+bw/2, y+10, "Precise Review", 22, sc=GRN))
+    els.append(TC(sx+bw/2, y+38, "reads only what matters", 14, sc=GRN))
+
+    # ── Bottom banner ──
+    els.append(R(200, 630, 600, 48, bg=RED_BG, fs="solid", sc=RED))
+    els.append(TC(500, 640, "Without skills/hooks: Claude ignores the graph entirely", 16, sc=RED))
+
+    return els
+
+
+# ════════════════════════════════════════════
+# DIAGRAM 8 — Supported Platforms
+# ════════════════════════════════════════════
+def d8():
+    els = []
+    els.append(TC(600, 20, "One Install, Every Platform", 36))
+    els.append(TC(600, 70, "code-review-graph install", 20, sc=PRP, ff=3))
+
+    platforms = [
+        ("Claude Code",  ".mcp.json",                            BLU, BLU_BG),
+        ("Cursor",       ".cursor/mcp.json",                     PRP, PRP_BG),
+        ("Windsurf",     "~/.codeium/windsurf/mcp_config.json",  ORG, ORG_BG),
+        ("Zed",          "Zed settings.json",                    GRN, GRN_BG),
+        ("Continue",     "~/.continue/config.json",              YLW, YLW_BG),
+        ("OpenCode",     ".opencode.json",                       RED, RED_BG),
+        ("Antigravity",  "~/.gemini/antigravity/mcp_config.json",GRY, GRY_BG),
+    ]
+
+    # Central "install" node
+    center_x, center_y = 600, 240
+    els.append(E(center_x-60, center_y-30, 120, 60, bg=PRP_BG, fs="solid", sc=PRP))
+    els.append(TC(center_x, center_y-10, "auto-detect", 15, sc=PRP))
+
+    # Fan out to platforms
+    cols = len(platforms)
+    card_w, card_h = 140, 80
+    total_w = cols * card_w + (cols-1) * 20
+    x0 = center_x - total_w/2
+    card_y = 360
+
+    for i, (name, cfg, sc, bg) in enumerate(platforms):
+        cx = x0 + i * (card_w + 20) + card_w/2
+
+        # Arrow from center
+        dx, dy = cx - center_x, card_y - center_y - 30
+        dist = math.sqrt(dx*dx + dy*dy)
+        sf = 35/dist
+        els.append(A(center_x + dx*sf, center_y + dy*sf,
+                     [[0,0], [dx*(1-sf*2), dy*(1-sf*2)]],
+                     sc=sc, sw=1, op=60))
+
+        # Platform card
+        els.append(R(cx-card_w/2, card_y, card_w, card_h, bg=bg, fs="solid", sc=sc))
+        els.append(TC(cx, card_y+15, name, 15, sc=sc))
+        # Config path (truncated)
+        short_cfg = cfg if len(cfg) < 22 else "..." + cfg[-18:]
+        els.append(TC(cx, card_y+42, short_cfg, 9, sc=GRY, ff=3))
+
+    # Footer
+    els.append(TC(600, 475, "Auto-detects installed platforms \u00b7 Detects pip vs uvx \u00b7 Writes correct config", 14, sc=GRY))
+
+    return els
+
+
+# ════════════════════════════════════════════
+# DIAGRAM 9 — Language Coverage
+# ════════════════════════════════════════════
+def d9():
+    els = []
+    els.append(TC(550, 15, "19 Languages + Notebook Support", 34))
+
+    # Group languages by ecosystem
+    groups = [
+        ("Web",       ["TypeScript", "JavaScript", "TSX", "Vue"],                  BLU, BLU_BG),
+        ("Backend",   ["Python", "Go", "Rust", "Java", "Scala"],                   GRN, GRN_BG),
+        ("Systems",   ["C", "C++", "C#"],                                          ORG, ORG_BG),
+        ("Mobile",    ["Kotlin", "Swift", "Dart"],                                 PRP, PRP_BG),
+        ("Scripting", ["Ruby", "PHP", "Perl", "Lua", "R"],                         YLW, YLW_BG),
+        ("Other",     ["Solidity", "Jupyter/.ipynb"],                               GRY, GRY_BG),
+    ]
+
+    gw = 155  # group width
+    gap = 20
+    total_w = len(groups) * gw + (len(groups)-1) * gap
+    x0 = (1100 - total_w) / 2
+    gy = 75
+
+    for gi, (group_name, langs, sc, bg) in enumerate(groups):
+        gx = x0 + gi * (gw + gap)
+        gh = 55 + len(langs) * 32
+
+        # Group container
+        els.append(R(gx, gy, gw, gh, bg=bg, fs="solid", sc=sc, op=60))
+        els.append(TC(gx+gw/2, gy+10, group_name, 16, sc=sc))
+
+        # Language pills
+        for li, lang in enumerate(langs):
+            ly = gy + 42 + li * 32
+            pw = gw - 20
+            els.append(R(gx+10, ly, pw, 24, bg="#ffffff", fs="solid",
+                         sc=sc, sw=1, rough=0, op=80))
+            els.append(TC(gx+gw/2, ly+4, lang, 13, sc=sc))
+
+    # Bottom: what each language gets
+    max_gh = max(55 + len(g[1]) * 32 for g in groups)
+    fy = gy + max_gh + 20
+    features = ["Functions", "Classes", "Imports", "Calls", "Inheritance", "Tests"]
+    feat_w = total_w / len(features)
+    for i, feat in enumerate(features):
+        fx = x0 + i * feat_w + feat_w/2
+        els.append(TC(fx, fy, "\u2713 " + feat, 13, sc=GRN))
+
+    els.append(TC(550, fy+28, "Full Tree-sitter grammar support for every language", 14, sc=GRY))
+
+    return els
+
+
+# ════════════════════════════════════════════
 # GENERATE ALL
 # ════════════════════════════════════════════
 if __name__ == "__main__":
@@ -517,6 +695,9 @@ if __name__ == "__main__":
         ("diagram4_incremental_update.excalidraw", d4),
         ("diagram5_benchmark_board.excalidraw", d5),
         ("diagram6_monorepo_funnel.excalidraw", d6),
+        ("diagram7_mcp_integration_flow.excalidraw", d7),
+        ("diagram8_supported_platforms.excalidraw", d8),
+        ("diagram9_language_coverage.excalidraw", d9),
     ]:
         save(f"{OUT}/{name}", fn())
     print("\nDone! Open files in https://excalidraw.com")

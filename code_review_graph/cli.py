@@ -119,23 +119,23 @@ def _handle_init(args: argparse.Namespace) -> None:
         print("\n[dry-run] No files were modified.")
         return
 
-    # Handle --skills, --hooks, --all flags
-    install_all = getattr(args, "install_all", False)
-    want_skills = getattr(args, "skills", False) or install_all
-    want_hooks = getattr(args, "hooks", False) or install_all
+    # Skills and hooks are installed by default so Claude actually uses the
+    # graph tools proactively.  Use --no-skills / --no-hooks to opt out.
+    skip_skills = getattr(args, "no_skills", False)
+    skip_hooks = getattr(args, "no_hooks", False)
+    # Legacy: --skills/--hooks/--all still accepted (no-op, everything is default)
 
-    if want_skills or want_hooks:
-        from .skills import generate_skills, inject_claude_md, install_hooks
+    from .skills import generate_skills, inject_claude_md, install_hooks
 
-        if want_skills:
-            skills_dir = generate_skills(repo_root)
-            print(f"Generated skills in {skills_dir}")
-            inject_claude_md(repo_root)
-            print("Updated CLAUDE.md with MCP tools reference")
+    if not skip_skills:
+        skills_dir = generate_skills(repo_root)
+        print(f"Generated skills in {skills_dir}")
+        inject_claude_md(repo_root)
+        print("Updated CLAUDE.md with MCP tools reference")
 
-        if want_hooks:
-            install_hooks(repo_root)
-            print(f"Installed hooks in {repo_root / '.claude' / 'settings.json'}")
+    if not skip_hooks:
+        install_hooks(repo_root)
+        print(f"Installed hooks in {repo_root / '.claude' / 'settings.json'}")
 
     print()
     print("Next steps:")
@@ -164,17 +164,18 @@ def main() -> None:
         help="Show what would be done without writing files",
     )
     install_cmd.add_argument(
-        "--skills", action="store_true",
-        help="Generate Claude Code skill files in .claude/skills/",
+        "--no-skills", action="store_true",
+        help="Skip generating Claude Code skill files",
     )
     install_cmd.add_argument(
-        "--hooks", action="store_true",
-        help="Install Claude Code hooks in .claude/settings.json",
+        "--no-hooks", action="store_true",
+        help="Skip installing Claude Code hooks",
     )
-    install_cmd.add_argument(
-        "--all", action="store_true", dest="install_all",
-        help="Install skills, hooks, and CLAUDE.md integration",
-    )
+    # Legacy flags (kept for backwards compat, now no-ops since all is default)
+    install_cmd.add_argument("--skills", action="store_true", help=argparse.SUPPRESS)
+    install_cmd.add_argument("--hooks", action="store_true", help=argparse.SUPPRESS)
+    install_cmd.add_argument("--all", action="store_true", dest="install_all",
+                             help=argparse.SUPPRESS)
     install_cmd.add_argument(
         "--platform",
         choices=[
@@ -194,17 +195,17 @@ def main() -> None:
         help="Show what would be done without writing files",
     )
     init_cmd.add_argument(
-        "--skills", action="store_true",
-        help="Generate Claude Code skill files in .claude/skills/",
+        "--no-skills", action="store_true",
+        help="Skip generating Claude Code skill files",
     )
     init_cmd.add_argument(
-        "--hooks", action="store_true",
-        help="Install Claude Code hooks in .claude/settings.json",
+        "--no-hooks", action="store_true",
+        help="Skip installing Claude Code hooks",
     )
-    init_cmd.add_argument(
-        "--all", action="store_true", dest="install_all",
-        help="Install skills, hooks, and CLAUDE.md integration",
-    )
+    init_cmd.add_argument("--skills", action="store_true", help=argparse.SUPPRESS)
+    init_cmd.add_argument("--hooks", action="store_true", help=argparse.SUPPRESS)
+    init_cmd.add_argument("--all", action="store_true", dest="install_all",
+                             help=argparse.SUPPRESS)
     init_cmd.add_argument(
         "--platform",
         choices=[

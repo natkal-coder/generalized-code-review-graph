@@ -369,26 +369,30 @@ _CLAUDE_MD_SECTION_MARKER = "<!-- code-review-graph MCP tools -->"
 _CLAUDE_MD_SECTION = f"""{_CLAUDE_MD_SECTION_MARKER}
 ## MCP Tools: code-review-graph
 
-This project uses **code-review-graph** for structural code analysis via MCP.
+**IMPORTANT: This project has a knowledge graph. ALWAYS use the code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore the codebase.** The graph is faster, cheaper (fewer tokens), and gives you structural context (callers, dependents, test coverage) that file scanning cannot.
 
-### Available Tools
+### When to use graph tools FIRST
 
-| Tool | Description |
-|------|-------------|
-| `build_or_update_graph` | Build or incrementally update the knowledge graph |
-| `detect_changes` | Risk-scored change impact analysis for code review |
-| `get_impact_radius` | Blast radius from changed files |
-| `get_review_context` | Focused review context with source snippets |
-| `get_affected_flows` | Find execution flows affected by changes |
-| `query_graph` | Predefined graph queries (callers, callees, imports, tests) |
-| `semantic_search_nodes` | Search by name or semantic similarity |
-| `list_flows` / `get_flow` | Explore execution flows |
-| `list_communities` / `get_community` | Explore code communities |
-| `get_architecture_overview` | High-level architecture from communities |
-| `find_large_functions` | Find oversized functions/classes |
-| `refactor_tool` / `apply_refactor_tool` | Graph-powered refactoring |
-| `list_graph_stats` | Codebase metrics |
-| `embed_graph` | Compute vector embeddings for semantic search |
+- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
+- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
+- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
+- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
+- **Architecture questions**: `get_architecture_overview` + `list_communities`
+
+Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+
+### Key Tools
+
+| Tool | Use when |
+|------|----------|
+| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
+| `get_review_context` | Need source snippets for review — token-efficient |
+| `get_impact_radius` | Understanding blast radius of a change |
+| `get_affected_flows` | Finding which execution paths are impacted |
+| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
+| `semantic_search_nodes` | Finding functions/classes by name or keyword |
+| `get_architecture_overview` | Understanding high-level codebase structure |
+| `refactor_tool` | Planning renames, finding dead code |
 
 ### Workflow
 

@@ -48,10 +48,10 @@ Requires Python 3.10+. For the best experience, install [uv](https://docs.astral
 |----------|-------------|:---:|
 | **Claude Code** | `.mcp.json` | Yes |
 | **Cursor** | `.cursor/mcp.json` | Yes |
-| **Windsurf** | `.windsurf/mcp.json` | Yes |
-| **Zed** | `.zed/settings.json` | Yes |
-| **Continue** | `.continue/config.json` | Yes |
-| **OpenCode** | `.opencode/config.json` | Yes |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | Yes |
+| **Zed** | Zed settings.json | Yes |
+| **Continue** | `~/.continue/config.json` | Yes |
+| **OpenCode** | `.opencode.json` | Yes |
 | **Antigravity** | `~/.gemini/antigravity/mcp_config.json` | Yes |
 
 Then open your project and ask your AI assistant:
