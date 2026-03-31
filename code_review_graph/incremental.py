@@ -131,6 +131,33 @@ def _is_binary(path: Path) -> bool:
 
 _GIT_TIMEOUT = int(os.environ.get("CRG_GIT_TIMEOUT", "30"))  # seconds, configurable
 
+
+def _git_branch_info(repo_root: Path) -> tuple[str, str]:
+    """Return (branch_name, head_sha) for the current repo state."""
+    branch = ""
+    sha = ""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True,
+            cwd=str(repo_root), timeout=_GIT_TIMEOUT,
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+            cwd=str(repo_root), timeout=_GIT_TIMEOUT,
+        )
+        if result.returncode == 0:
+            sha = result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return branch, sha
+
 _SAFE_GIT_REF = re.compile(r"^[A-Za-z0-9_.~^/@{}\-]+$")
 
 
@@ -294,6 +321,11 @@ def full_build(repo_root: Path, store: GraphStore) -> dict:
 
     store.set_metadata("last_updated", time.strftime("%Y-%m-%dT%H:%M:%S"))
     store.set_metadata("last_build_type", "full")
+    branch, sha = _git_branch_info(repo_root)
+    if branch:
+        store.set_metadata("git_branch", branch)
+    if sha:
+        store.set_metadata("git_head_sha", sha)
     store.commit()
 
     return {
@@ -378,6 +410,11 @@ def incremental_update(
 
     store.set_metadata("last_updated", time.strftime("%Y-%m-%dT%H:%M:%S"))
     store.set_metadata("last_build_type", "incremental")
+    branch, sha = _git_branch_info(repo_root)
+    if branch:
+        store.set_metadata("git_branch", branch)
+    if sha:
+        store.set_metadata("git_head_sha", sha)
     store.commit()
 
     return {

@@ -434,6 +434,21 @@ def main() -> None:
             print(f"Files: {stats.files_count}")
             print(f"Languages: {', '.join(stats.languages)}")
             print(f"Last updated: {stats.last_updated or 'never'}")
+            # Show branch info and warn if stale
+            stored_branch = store.get_metadata("git_branch")
+            stored_sha = store.get_metadata("git_head_sha")
+            if stored_branch:
+                print(f"Built on branch: {stored_branch}")
+            if stored_sha:
+                print(f"Built at commit: {stored_sha[:12]}")
+            from .incremental import _git_branch_info
+            current_branch, current_sha = _git_branch_info(repo_root)
+            if stored_branch and current_branch and stored_branch != current_branch:
+                print(
+                    f"WARNING: Graph was built on '{stored_branch}' "
+                    f"but you are now on '{current_branch}'. "
+                    f"Run 'code-review-graph build' to rebuild."
+                )
 
         elif args.command == "watch":
             watch(repo_root, store)

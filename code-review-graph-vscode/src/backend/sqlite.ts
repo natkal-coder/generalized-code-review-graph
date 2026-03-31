@@ -8,7 +8,29 @@
  * Uses `better-sqlite3` with prepared statements for performance.
  */
 
-import Database from 'better-sqlite3';
+import type DatabaseType from 'better-sqlite3';
+
+// Load better-sqlite3 with graceful error handling for ABI mismatches.
+// On WSL or mismatched Node.js versions, the native module may fail to load.
+let Database: typeof import('better-sqlite3').default;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  Database = require('better-sqlite3');
+} catch (err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  const isAbiMismatch = msg.includes('NODE_MODULE_VERSION')
+    || msg.includes('was compiled against')
+    || msg.includes('not a valid Win32');
+  if (isAbiMismatch) {
+    console.error(
+      '[code-review-graph] better-sqlite3 ABI mismatch. '
+      + 'Your VS Code uses a different Node.js version than the one '
+      + 'this extension was built for. '
+      + 'Try: cd ~/.vscode/extensions/code-review-graph-* && npm rebuild better-sqlite3'
+    );
+  }
+  throw err;
+}
 
 // ---------------------------------------------------------------------------
 // Interfaces
@@ -132,7 +154,7 @@ const MAX_OPEN_RETRIES = 3;
 const RETRY_BACKOFF_MS = 100;
 
 export class SqliteReader {
-  private db: Database.Database | null = null;
+  private db: DatabaseType.Database | null = null;
 
   /**
    * Create a SqliteReader with retry logic that does not block the event loop.
