@@ -62,7 +62,11 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         if self._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer(self._model_name)
+                self._model = SentenceTransformer(
+                    self._model_name,
+                    trust_remote_code=True,
+                    model_kwargs={"trust_remote_code": True},
+                )
             except ImportError:
                 raise ImportError(
                     "sentence-transformers not installed. "

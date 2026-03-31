@@ -321,6 +321,7 @@ def semantic_search_nodes(
     try:
         results = hybrid_search(
             store, query, kind=kind, limit=limit, context_files=context_files,
+            model=model,
         )
 
         search_mode = "hybrid"
