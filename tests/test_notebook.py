@@ -185,7 +185,7 @@ class TestDatabricksNotebookParsing:
 
     def test_skips_md_cells(self):
         func_count = len([n for n in self.nodes if n.kind == "Function"])
-        assert func_count == 2  # transform_data + process_results
+        assert func_count == 3  # transform_data + process_results + clean_data (R cell)
 
     def test_default_language_for_unmagicked_cell(self):
         """Cell 6 has no magic prefix — should use kernel default (python)."""
@@ -232,7 +232,7 @@ class TestDatabricksPyNotebook:
     def test_skips_magic_md_cells(self):
         funcs = [n for n in self.nodes if n.kind == "Function"]
         names = {f.name for f in funcs}
-        assert len(names) == 2  # load_config + process_events
+        assert len(names) == 3  # load_config + process_events + summarize_data (R cell)
 
     def test_cell_index_tracking(self):
         funcs = {n.name: n for n in self.nodes if n.kind == "Function"}
