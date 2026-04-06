@@ -5,10 +5,12 @@ from unittest.mock import patch
 
 from code_review_graph.skills import (
     _CLAUDE_MD_SECTION_MARKER,
+    _GEMINI_MD_SECTION_MARKER,
     PLATFORMS,
     generate_hooks_config,
     generate_skills,
     inject_claude_md,
+    inject_platform_instructions,
     install_hooks,
     install_platform_configs,
 )
@@ -164,6 +166,49 @@ class TestInjectClaudeMd:
         assert second_content.count(_CLAUDE_MD_SECTION_MARKER) == 1
 
 
+class TestInjectPlatformInstructions:
+    def test_injects_gemini_md_section(self, tmp_path):
+        """GEMINI.md should get Gemini-specific instructions."""
+        updated = inject_platform_instructions(tmp_path)
+        gemini_md = tmp_path / "GEMINI.md"
+        assert gemini_md.exists()
+        content = gemini_md.read_text()
+        assert _GEMINI_MD_SECTION_MARKER in content
+        assert "Gemini CLI" in content or "MCP Tools" in content
+
+    def test_injects_claude_md_section_to_others(self, tmp_path):
+        """Non-GEMINI.md files should get generic Claude section."""
+        updated = inject_platform_instructions(tmp_path)
+        agents_md = tmp_path / "AGENTS.md"
+        assert agents_md.exists()
+        content = agents_md.read_text()
+        assert _CLAUDE_MD_SECTION_MARKER in content
+
+    def test_returns_updated_files(self, tmp_path):
+        """Should return list of updated files."""
+        updated = inject_platform_instructions(tmp_path)
+        # Should have injected all 4 platform instruction files
+        assert len(updated) == 4
+        assert "GEMINI.md" in updated
+        assert "AGENTS.md" in updated
+        assert ".cursorrules" in updated
+        assert ".windsurfrules" in updated
+
+    def test_idempotent_platform_instructions(self, tmp_path):
+        """Running twice should not duplicate sections."""
+        first_run = inject_platform_instructions(tmp_path)
+        assert len(first_run) == 4
+
+        # Second run should skip (already present)
+        second_run = inject_platform_instructions(tmp_path)
+        assert len(second_run) == 0
+
+        # Verify no duplicates
+        gemini_md = tmp_path / "GEMINI.md"
+        content = gemini_md.read_text()
+        assert content.count(_GEMINI_MD_SECTION_MARKER) == 1
+
+
 class TestInstallPlatformConfigs:
     def test_install_cursor_config(self, tmp_path):
         with patch.dict(PLATFORMS, {
@@ -289,3 +334,33 @@ class TestInstallPlatformConfigs:
             install_platform_configs(tmp_path, target="continue")
         data = json.loads(config_path.read_text())
         assert len(data["mcpServers"]) == 1
+
+    def test_install_gemini_cli_config(self, tmp_path):
+        """Test Gemini CLI MCP server configuration."""
+        gemini_settings = tmp_path / "gemini_settings.json"
+        with patch.dict(PLATFORMS, {
+            "gemini-cli": {
+                **PLATFORMS["gemini-cli"],
+                "config_path": lambda root: gemini_settings,
+                "detect": lambda: True,
+            },
+        }):
+            configured = install_platform_configs(tmp_path, target="gemini-cli")
+        assert "Gemini CLI" in configured
+        assert gemini_settings.exists()
+        data = json.loads(gemini_settings.read_text())
+        assert "mcpServers" in data
+        assert "code-review-graph" in data["mcpServers"]
+        entry = data["mcpServers"]["code-review-graph"]
+        # Gemini CLI doesn't need 'type' field
+        assert "type" not in entry
+        # Command and args depend on whether uvx is available
+        assert entry["command"] in ["uvx", "code-review-graph"]
+        assert "serve" in entry["args"]
+
+    def test_gemini_cli_in_platform_choices(self):
+        """Verify gemini-cli is available in PLATFORMS."""
+        assert "gemini-cli" in PLATFORMS
+        assert PLATFORMS["gemini-cli"]["name"] == "Gemini CLI"
+        assert PLATFORMS["gemini-cli"]["format"] == "object"
+        assert PLATFORMS["gemini-cli"]["needs_type"] is False

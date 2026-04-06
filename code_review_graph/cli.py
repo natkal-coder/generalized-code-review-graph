@@ -187,7 +187,7 @@ def main() -> None:
         "--platform",
         choices=[
             "claude", "claude-code", "cursor", "windsurf", "zed",
-            "continue", "opencode", "antigravity", "all",
+            "continue", "opencode", "gemini-cli", "antigravity", "all",
         ],
         default="all",
         help="Target platform for MCP config (default: all detected)",
@@ -231,6 +231,7 @@ def main() -> None:
     update_cmd = sub.add_parser("update", help="Incremental update (only changed files)")
     update_cmd.add_argument("--base", default="HEAD~1", help="Git diff base (default: HEAD~1)")
     update_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+    update_cmd.add_argument("--quiet", action="store_true", help="Suppress output")
 
     # watch
     watch_cmd = sub.add_parser("watch", help="Watch for changes and auto-update")
@@ -430,10 +431,11 @@ def main() -> None:
 
         elif args.command == "update":
             result = incremental_update(repo_root, store, base=args.base)
-            print(
-                f"Incremental: {result['files_updated']} files updated, "
-                f"{result['total_nodes']} nodes, {result['total_edges']} edges"
-            )
+            if not getattr(args, "quiet", False):
+                print(
+                    f"Incremental: {result['files_updated']} files updated, "
+                    f"{result['total_nodes']} nodes, {result['total_edges']} edges"
+                )
 
         elif args.command == "status":
             stats = store.get_stats()
