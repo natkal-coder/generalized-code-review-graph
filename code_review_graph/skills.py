@@ -450,11 +450,15 @@ _GEMINI_MD_SECTION_MARKER = "<!-- code-review-graph MCP tools -->"
 _GEMINI_MD_SECTION = f"""{_GEMINI_MD_SECTION_MARKER}
 ## MCP Tools: code-review-graph
 
-**Use the code-review-graph MCP tools FIRST for code analysis.** The graph is faster, cheaper (fewer tokens), and gives you structural context (callers, dependents, test coverage) that file scanning cannot.
+**Use the code-review-graph MCP tools FIRST for code analysis.**
+
+The graph is faster, cheaper (fewer tokens), and gives you structural context
+(callers, dependents, test coverage) that file scanning cannot.
 
 ### Gemini CLI Setup
 
-The code-review-graph MCP server is auto-configured in `~/.gemini/settings.json` under `mcpServers.code-review-graph`.
+The code-review-graph MCP server is auto-configured in `~/.gemini/settings.json`
+under `mcpServers.code-review-graph`.
 
 To verify the setup:
 ```bash
@@ -472,7 +476,8 @@ gemini /mcp reload
 - **Exploring code**: `semantic_search_nodes` or `query_graph` (not manual file reads)
 - **Understanding impact**: `get_impact_radius` (not tracing imports manually)
 - **Code review**: `detect_changes` + `get_review_context` (not reading entire files)
-- **Finding relationships**: `query_graph` with patterns (callers_of, callees_of, imports_of, tests_for)
+- **Finding relationships**: `query_graph` with patterns
+  (callers_of, callees_of, imports_of, tests_for)
 - **Architecture**: `get_architecture_overview` + `list_communities`
 
 ### Key Tools Reference
