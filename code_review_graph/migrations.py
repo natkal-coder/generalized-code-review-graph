@@ -41,6 +41,7 @@ def _set_schema_version(conn: sqlite3.Connection, version: int) -> None:
 
 _KNOWN_TABLES = frozenset({
     "nodes", "edges", "metadata", "communities", "flows", "flow_memberships", "nodes_fts",
+    "node_metrics", "node_annotations",
 })
 
 
@@ -156,15 +157,81 @@ def _migrate_v5(conn: sqlite3.Connection) -> None:
         logger.info("Migration v5: created nodes_fts FTS5 virtual table")
 
 
+def _migrate_v6(conn: sqlite3.Connection) -> None:
+    """v6: Add quality columns to nodes, create node_metrics and node_annotations tables."""
+    for col, definition in [
+        ("purpose", "TEXT"),
+        ("complexity_score", "REAL"),
+        ("test_coverage_pct", "REAL"),
+        ("has_docstring", "INTEGER DEFAULT 0"),
+        ("docstring_summary", "TEXT"),
+    ]:
+        if not _has_column(conn, "nodes", col):
+            conn.execute(f"ALTER TABLE nodes ADD COLUMN {col} {definition}")  # noqa: S608
+            logger.info("Migration v6: added '%s' column to nodes", col)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS node_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id INTEGER NOT NULL,
+            metric TEXT NOT NULL,
+            value REAL NOT NULL,
+            recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (node_id, metric)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_node_metrics_node ON node_metrics(node_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_node_metrics_metric ON node_metrics(metric)"
+    )
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS node_annotations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id INTEGER NOT NULL,
+            category TEXT NOT NULL,
+            tag TEXT NOT NULL,
+            value TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (node_id, category, tag)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_node_annotations_node ON node_annotations(node_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_node_annotations_category ON node_annotations(category)"
+    )
+    logger.info("Migration v6: created node_metrics and node_annotations tables")
+
+
 # ---------------------------------------------------------------------------
 # Migration registry
 # ---------------------------------------------------------------------------
 
+
+def _migrate_v7(conn: sqlite3.Connection) -> None:
+    """v7: Add readability/complexity columns to nodes table."""
+    for col, definition in [
+        ("intent_tags", "TEXT"),
+        ("documentation_gap", "INTEGER DEFAULT 0"),
+        ("cognitive_complexity", "REAL"),
+        ("param_count", "INTEGER"),
+        ("nesting_depth", "INTEGER"),
+        ("smell_tags", "TEXT"),
+    ]:
+        if not _has_column(conn, "nodes", col):
+            conn.execute(f"ALTER TABLE nodes ADD COLUMN {col} {definition}")  # noqa: S608
+            logger.info("Migration v7: added '%s' column to nodes", col)
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     3: _migrate_v3,
     4: _migrate_v4,
     5: _migrate_v5,
+    6: _migrate_v6,
+    7: _migrate_v7,
 }
 
 LATEST_VERSION = max(MIGRATIONS.keys())
@@ -196,3 +263,5 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             raise
 
     logger.info("Migrations complete, now at schema version %d", LATEST_VERSION)
+
+

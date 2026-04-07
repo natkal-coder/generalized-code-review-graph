@@ -18,6 +18,7 @@ from typing import Optional
 
 from .graph import GraphStore
 from .parser import CodeParser
+from . import smells
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +309,11 @@ def full_build(repo_root: Path, store: GraphStore) -> dict:
             source = full_path.read_bytes()
             fhash = hashlib.sha256(source).hexdigest()
             nodes, edges = parser.parse_bytes(full_path, source)
+            # Detect code smells for each node
+            for node in nodes:
+                smell_list = smells.analyze_node(node, store, source.decode("utf-8", errors="ignore"))
+                if smell_list:
+                    node.extra["smell_tags"] = [s["tag"] for s in smell_list]
             store.store_file_nodes_edges(str(full_path), nodes, edges, fhash)
             total_nodes += len(nodes)
             total_edges += len(edges)

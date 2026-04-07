@@ -25,7 +25,8 @@
   - `wiki.py` — Markdown wiki generation from community structure
   - `skills.py` — Skill definitions for Claude Code plugin
   - `registry.py` — Multi-repo registry with connection pool
-  - `migrations.py` — Database schema migrations (v1-v5)
+  - `smells.py` — Code smell detection (God objects, long params, deep nesting, magic numbers, silent catches, unused imports)
+  - `migrations.py` — Database schema migrations (v1-v7)
   - `tsconfig_resolver.py` — TypeScript path alias resolution
 
 - **VS Code Extension**: `code-review-graph-vscode/` (TypeScript)
@@ -46,6 +47,7 @@ uv run mypy code_review_graph/ --ignore-missing-imports --no-strict-optional
 uv run code-review-graph build              # Full graph build
 uv run code-review-graph update             # Incremental update
 uv run code-review-graph status             # Show stats
+uv run code-review-graph health             # Code quality health report
 uv run code-review-graph serve              # Start MCP server
 uv run code-review-graph wiki               # Generate markdown wiki
 uv run code-review-graph detect-changes     # Risk-scored change analysis

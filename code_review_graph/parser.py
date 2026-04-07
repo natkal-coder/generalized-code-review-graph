@@ -221,6 +221,163 @@ _CALL_TYPES: dict[str, list[str]] = {
     "solidity": ["call_expression"],
     "lua": ["function_call"],
 }
+# Branch node types per language for cyclomatic/cognitive complexity analysis
+_BRANCH_NODE_TYPES: dict[str, list[str]] = {
+    "python": [
+        "if_statement", "elif_clause", "for_statement", "while_statement",
+        "except_clause", "boolean_operator",
+    ],
+    "javascript": [
+        "if_statement", "else_clause", "for_statement", "for_in_statement",
+        "while_statement", "do_statement", "switch_case", "catch_clause",
+        "logical_expression", "ternary_expression",
+    ],
+    "typescript": [
+        "if_statement", "else_clause", "for_statement", "for_in_statement",
+        "while_statement", "do_statement", "switch_case", "catch_clause",
+        "logical_expression", "ternary_expression",
+    ],
+    "tsx": [
+        "if_statement", "else_clause", "for_statement", "for_in_statement",
+        "while_statement", "do_statement", "switch_case", "catch_clause",
+        "logical_expression", "ternary_expression",
+    ],
+    "go": [
+        "if_statement", "else_clause", "for_statement", "switch_statement",
+        "case_clause", "select_statement", "comm_clause",
+    ],
+    "rust": [
+        "if_expression", "else_clause", "for_expression", "while_expression",
+        "loop_expression", "match_arm", "while_let_expression", "if_let_expression",
+    ],
+    "java": [
+        "if_statement", "else_clause", "for_statement", "enhanced_for_statement",
+        "while_statement", "do_statement", "switch_label", "catch_clause",
+        "ternary_expression",
+    ],
+    "c": [
+        "if_statement", "else_clause", "for_statement", "while_statement",
+        "do_statement", "switch_label", "case_statement",
+    ],
+    "cpp": [
+        "if_statement", "else_clause", "for_statement", "while_statement",
+        "do_statement", "switch_label", "case_statement", "catch_clause",
+    ],
+    "csharp": [
+        "if_statement", "else_clause", "for_statement", "foreach_statement",
+        "while_statement", "do_statement", "switch_section", "catch_clause",
+        "conditional_expression",
+    ],
+    "ruby": [
+        "if", "elsif", "unless", "while", "until", "for", "rescue",
+        "case", "when", "conditional",
+    ],
+    "kotlin": [
+        "if_expression", "else_clause", "for_statement", "while_statement",
+        "do_while_statement", "when_entry", "catch_block",
+    ],
+    "swift": [
+        "if_statement", "else_clause", "for_in_statement", "while_statement",
+        "repeat_while_statement", "switch_case", "catch_clause",
+        "guard_statement", "conditional_binding_pattern",
+    ],
+    "php": [
+        "if_statement", "else_clause", "elseif_clause", "for_statement",
+        "foreach_statement", "while_statement", "do_statement",
+        "switch_statement", "case_statement", "catch_clause",
+    ],
+    "scala": [
+        "if_expression", "else_clause", "for_expression", "while_expression",
+        "do_expression", "case_clause", "catch_clause",
+    ],
+    "solidity": [
+        "if_statement", "else_clause", "for_statement", "while_statement",
+        "do_while_statement", "try_statement", "catch_clause",
+    ],
+    "dart": [
+        "if_statement", "else_clause", "for_statement", "while_statement",
+        "do_statement", "switch_case", "catch_clause",
+        "conditional_expression",
+    ],
+    "r": [
+        "if", "while", "for", "repeat",
+    ],
+    "perl": [
+        "if_statement", "unless_statement", "while_statement", "for_statement",
+        "foreach_statement", "given_statement", "when_statement",
+    ],
+    "lua": [
+        "if_statement", "elseif_clause", "while_statement", "for_statement",
+        "repeat_statement",
+    ],
+}
+
+# Node types that introduce a new nesting level (for nesting depth tracking)
+_NESTING_NODE_TYPES: dict[str, list[str]] = {
+    "python": ["if_statement", "for_statement", "while_statement", "with_statement"],
+    "javascript": [
+        "if_statement", "for_statement", "for_in_statement",
+        "while_statement", "do_statement",
+    ],
+    "typescript": [
+        "if_statement", "for_statement", "for_in_statement",
+        "while_statement", "do_statement",
+    ],
+    "tsx": [
+        "if_statement", "for_statement", "for_in_statement",
+        "while_statement", "do_statement",
+    ],
+    "go": ["if_statement", "for_statement", "switch_statement", "select_statement"],
+    "rust": [
+        "if_expression", "for_expression", "while_expression",
+        "loop_expression", "match_expression",
+    ],
+    "java": [
+        "if_statement", "for_statement", "enhanced_for_statement",
+        "while_statement", "do_statement", "switch_expression",
+    ],
+    "c": ["if_statement", "for_statement", "while_statement", "do_statement", "switch_statement"],
+    "cpp": ["if_statement", "for_statement", "while_statement", "do_statement", "switch_statement"],
+    "csharp": [
+        "if_statement", "for_statement", "foreach_statement",
+        "while_statement", "do_statement", "switch_statement",
+    ],
+    "ruby": ["if", "while", "until", "for"],
+    "kotlin": [
+        "if_expression", "for_statement", "while_statement",
+        "do_while_statement", "when_expression",
+    ],
+    "swift": [
+        "if_statement", "for_in_statement", "while_statement",
+        "repeat_while_statement", "switch_statement", "guard_statement",
+    ],
+    "php": [
+        "if_statement", "for_statement", "foreach_statement",
+        "while_statement", "do_statement", "switch_statement",
+    ],
+    "scala": ["if_expression", "for_expression", "while_expression", "match_expression"],
+    "solidity": ["if_statement", "for_statement", "while_statement", "do_while_statement"],
+    "dart": [
+        "if_statement", "for_statement", "while_statement",
+        "do_statement", "switch_statement",
+    ],
+    "r": ["if", "while", "for"],
+    "perl": ["if_statement", "while_statement", "for_statement", "foreach_statement"],
+    "lua": ["if_statement", "while_statement", "for_statement", "repeat_statement"],
+}
+
+# Parameter node types per language used to count parameters
+_PARAM_CONTAINER_TYPES: frozenset[str] = frozenset({
+    "parameters", "formal_parameters", "parameter_list", "formal_parameter_list",
+})
+
+# Parameter child types that represent a single parameter (skip punctuation/self)
+_PARAM_CHILD_SKIP_TYPES: frozenset[str] = frozenset({
+    "(", ")", ",", "comment",
+    # Python: self/cls are not counted as user-facing params in some styles,
+    # but we count all named params for simplicity.
+})
+
 
 # Patterns that indicate a test function
 _TEST_PATTERNS = [
@@ -248,6 +405,8 @@ _TEST_RUNNER_NAMES = frozenset({
     "describe", "it", "test", "beforeEach", "afterEach",
     "beforeAll", "afterAll",
 })
+
+_INTENT_TAG_RE = re.compile(r"\b(TODO|FIXME|DEPRECATED|HACK)\b")
 
 
 def _is_test_file(path: str) -> bool:
@@ -849,6 +1008,127 @@ class CodeParser:
 
     _MAX_AST_DEPTH = 180  # Guard against pathologically nested source files
     _MAX_TEST_DESCRIPTION_LEN = 200  # Cap test description length in node names
+
+    # Per-language: node types that hold the leading docstring child of a
+    # function/class node.  For comment-based languages the comments appear as
+    # siblings *before* the definition node (handled separately below).
+    _DOCSTRING_CHILD_TYPES: dict[str, list[str]] = {
+        # Python: first child of function/class body is expression_statement > string
+        "python": ["expression_statement"],
+        # Rust, Go, Java, C#: doc-comment tokens are siblings, not children
+    }
+
+    def _extract_docstring(
+        self,
+        node,
+        source: bytes,
+        language: str,
+    ) -> tuple[str, bool, list[str]]:
+        """Return (docstring_summary, has_docstring, intent_tags) for a function/class node.
+
+        Strategy per language:
+        - Python: look for expression_statement > string as the first statement
+          inside the body.
+        - JS/TS/Go/Java/Rust/C/C++/others: scan the raw comment tokens that
+          appear as immediate preceding siblings in the parent.  Tree-sitter
+          attaches block/line comments as sibling nodes before the definition.
+        """
+        docstring_text = ""
+        has_docstring = False
+
+        if language == "python":
+            # Find the function/class body node
+            body = None
+            for ch in node.children:
+                if ch.type == "block":
+                    body = ch
+                    break
+            if body and body.children:
+                first = body.children[0]
+                # tree-sitter Python: docstring is a bare `string` node as
+                # first child of the block (not wrapped in expression_statement)
+                string_node = None
+                if first.type == "string":
+                    string_node = first
+                elif first.type == "expression_statement" and first.children:
+                    inner = first.children[0]
+                    if inner.type == "string":
+                        string_node = inner
+                if string_node is not None:
+                    # Prefer the string_content child to avoid quote chars
+                    content_node = next(
+                        (c for c in string_node.children if c.type == "string_content"),
+                        None,
+                    )
+                    if content_node is not None:
+                        docstring_text = content_node.text.decode(
+                            "utf-8", errors="replace",
+                        ).strip()
+                    else:
+                        raw = string_node.text.decode("utf-8", errors="replace")
+                        for q in ('"""', "'''", '"', "'"):
+                            if raw.startswith(q) and raw.endswith(q) and len(raw) > 2 * len(q):
+                                raw = raw[len(q):-len(q)]
+                                break
+                        docstring_text = raw.strip()
+                    has_docstring = True
+        else:
+            # For all other languages look for comment siblings immediately
+            # preceding this node in the parent's children list.
+            parent = node.parent
+            if parent is not None:
+                siblings = list(parent.children)
+                idx = next(
+                    (i for i, s in enumerate(siblings) if s.id == node.id), None,
+                )
+                if idx is not None:
+                    comment_lines: list[str] = []
+                    for sib in reversed(siblings[:idx]):
+                        if sib.type in (
+                            "comment", "line_comment", "block_comment",
+                            "doc_comment",
+                        ):
+                            raw = sib.text.decode("utf-8", errors="replace").strip()
+                            # Strip leading //, /*, *, -- etc.
+                            raw = re.sub(r"^(/\*+!?|\*+/?|///?!?|#|--)", "", raw).strip()
+                            comment_lines.insert(0, raw)
+                        else:
+                            break
+                    if comment_lines:
+                        docstring_text = " ".join(comment_lines).strip()
+                        has_docstring = True
+
+        # Scan for intent tags: collect all comment text visible near the node
+        _comment_types = frozenset({
+            "comment", "line_comment", "block_comment", "doc_comment",
+        })
+        raw_texts: list[str] = [docstring_text]
+
+        # 1. Direct comment children of the definition node (Python puts
+        #    inline comments before the block as function_definition children)
+        for ch in node.children:
+            if ch.type in _comment_types:
+                raw_texts.append(ch.text.decode("utf-8", errors="replace"))
+
+        # 2. Preceding comment siblings in the parent (JS/TS/Go/Rust/C etc.)
+        parent = node.parent
+        if parent is not None:
+            siblings = list(parent.children)
+            idx = next(
+                (i for i, s in enumerate(siblings) if s.id == node.id), None,
+            )
+            if idx is not None:
+                for sib in reversed(siblings[:idx]):
+                    if sib.type in _comment_types:
+                        raw_texts.append(
+                            sib.text.decode("utf-8", errors="replace"),
+                        )
+                    else:
+                        break
+
+        combined = " ".join(raw_texts).upper()
+        tags = sorted(set(_INTENT_TAG_RE.findall(combined)))
+        return docstring_text[:100], has_docstring, tags
 
     def _get_test_description(self, call_node, source: bytes) -> Optional[str]:
         """Extract the first string argument from a test runner call node."""
@@ -1487,6 +1767,13 @@ class CodeParser:
             parent_name=enclosing_class,
         )
         nodes.append(node)
+        _ds_text, _has_ds, _tags = self._extract_docstring(child, source, language)
+        node.extra["docstring_summary"] = _ds_text
+        node.extra["has_docstring"] = 1 if _has_ds else 0
+        node.extra["intent_tags"] = _tags
+        line_span = (child.end_point[0] + 1) - (child.start_point[0] + 1)
+        if line_span > 20 and not _has_ds:
+            node.extra["documentation_gap"] = 1
 
         # CONTAINS edge
         edges.append(EdgeInfo(
@@ -1518,6 +1805,82 @@ class CodeParser:
             _depth=_depth + 1,
         )
         return True
+
+    @staticmethod
+    def _compute_function_metrics(node, source: bytes, language: str) -> dict:
+        """Walk a function AST node once and extract complexity metrics.
+
+        Returns a dict with keys:
+          complexity_score   — cyclomatic complexity (1 + branch count)
+          cognitive_complexity — weighted branch count (nested branches cost more)
+          nesting_depth      — maximum control-flow nesting depth inside the function
+          param_count        — number of declared parameters
+        """
+        branch_types = frozenset(_BRANCH_NODE_TYPES.get(language, []))
+        nesting_types = frozenset(_NESTING_NODE_TYPES.get(language, []))
+
+        branch_count = 0
+        max_depth = 0
+        param_count = 0
+
+        def _walk(ast_node, current_nesting: int) -> None:
+            nonlocal branch_count, max_depth
+
+            for child in ast_node.children:
+                ntype = child.type
+
+                # Count branches for cyclomatic complexity
+                if ntype in branch_types:
+                    branch_count += 1
+
+                # Track nesting depth
+                if ntype in nesting_types:
+                    new_depth = current_nesting + 1
+                    if new_depth > max_depth:
+                        max_depth = new_depth
+                    _walk(child, new_depth)
+                else:
+                    _walk(child, current_nesting)
+
+        _walk(node, 0)
+
+        # Cognitive complexity: re-walk weighting nested branches higher
+        cognitive = 0
+
+        def _walk_cognitive(ast_node, nesting: int) -> None:
+            nonlocal cognitive
+
+            for child in ast_node.children:
+                ntype = child.type
+                if ntype in branch_types:
+                    cognitive += 1 + nesting  # +1 base, +nesting for depth penalty
+                if ntype in nesting_types:
+                    _walk_cognitive(child, nesting + 1)
+                else:
+                    _walk_cognitive(child, nesting)
+
+        _walk_cognitive(node, 0)
+
+        # Parameter count: find the params container node
+        for child in node.children:
+            if child.type in _PARAM_CONTAINER_TYPES:
+                # Count non-punctuation children
+                param_count = sum(
+                    1 for c in child.children
+                    if c.type not in _PARAM_CHILD_SKIP_TYPES and c.is_named
+                )
+                break
+        else:
+            # Solidity: parameters are direct children of type "parameter"
+            if language == "solidity":
+                param_count = sum(1 for c in node.children if c.type == "parameter")
+
+        return {
+            "complexity_score": 1 + branch_count,
+            "cognitive_complexity": 1 + cognitive,
+            "nesting_depth": max_depth,
+            "param_count": param_count,
+        }
 
     def _extract_functions(
         self,
@@ -1558,7 +1921,15 @@ class CodeParser:
             return_type=ret_type,
             is_test=is_test,
         )
+        node.extra.update(self._compute_function_metrics(child, source, language))
         nodes.append(node)
+        _ds_text, _has_ds, _tags = self._extract_docstring(child, source, language)
+        node.extra["docstring_summary"] = _ds_text
+        node.extra["has_docstring"] = 1 if _has_ds else 0
+        node.extra["intent_tags"] = _tags
+        line_span = (child.end_point[0] + 1) - (child.start_point[0] + 1)
+        if line_span > 20 and not _has_ds:
+            node.extra["documentation_gap"] = 1
 
         # CONTAINS edge
         container = (

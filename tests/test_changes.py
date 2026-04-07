@@ -437,3 +437,179 @@ class TestChanges:
             assert "risk_score" in result
             assert "test_gaps" in result
             assert "review_priorities" in result
+
+
+# ---------------------------------------------------------------------------
+# Code quality enrichment tests
+# ---------------------------------------------------------------------------
+
+
+class TestCodeQualityEnrichment:
+    def setup_method(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.store = GraphStore(self.tmp.name)
+
+    def teardown_method(self):
+        self.store.close()
+        Path(self.tmp.name).unlink(missing_ok=True)
+
+    def _add_func(
+        self,
+        name: str,
+        path: str = "app.py",
+        extra: dict | None = None,
+        line_start: int = 1,
+        line_end: int = 20,
+        is_test: bool = False,
+    ) -> int:
+        node = NodeInfo(
+            kind="Test" if is_test else "Function",
+            name=name,
+            file_path=path,
+            line_start=line_start,
+            line_end=line_end,
+            language="python",
+            parent_name=None,
+            is_test=is_test,
+            extra=extra or {},
+        )
+        nid = self.store.upsert_node(node, file_hash="abc")
+        self.store.commit()
+        return nid
+
+    def _add_tested_by(self, test_qn: str, target_qn: str) -> None:
+        edge = EdgeInfo(kind="TESTED_BY", source=test_qn, target=target_qn,
+                        file_path="tests.py", line=1)
+        self.store.upsert_edge(edge)
+        self.store.commit()
+
+    # --- analyze_changes returns enrichment keys ---
+
+    def test_analyze_changes_has_enrichment_keys(self):
+        self._add_func("process", extra={"complexity_score": 5})
+        result = analyze_changes(
+            self.store,
+            changed_files=["app.py"],
+            changed_ranges={"app.py": [(1, 20)]},
+        )
+        assert "complexity_analysis" in result
+        assert "smell_analysis" in result
+        assert "test_impact" in result
+        assert "documentation_changes" in result
+
+    # --- smell detection ---
+
+    def test_smell_high_cc(self):
+        from code_review_graph.changes import _smell_tags_for_node
+        from code_review_graph.graph import GraphNode
+
+        node = GraphNode(
+            id=1, kind="Function", name="big_func",
+            qualified_name="app.py::big_func", file_path="app.py",
+            line_start=1, line_end=100, language="python",
+            parent_name=None, params=None, return_type=None,
+            is_test=False, file_hash=None,
+            complexity_score=25.0, cognitive_complexity=None,
+            param_count=None, nesting_depth=None,
+        )
+        smells = _smell_tags_for_node(node)
+        assert any(s["smell"] == "high_cyclomatic_complexity" for s in smells)
+        assert any(s["severity"] == "high" for s in smells)
+
+    def test_smell_long_param_list(self):
+        from code_review_graph.changes import _smell_tags_for_node
+        from code_review_graph.graph import GraphNode
+
+        node = GraphNode(
+            id=2, kind="Function", name="many_params",
+            qualified_name="app.py::many_params", file_path="app.py",
+            line_start=1, line_end=10, language="python",
+            parent_name=None, params=None, return_type=None,
+            is_test=False, file_hash=None,
+            complexity_score=2.0, cognitive_complexity=None,
+            param_count=6, nesting_depth=None,
+        )
+        smells = _smell_tags_for_node(node)
+        assert any(s["smell"] == "long_param_list" for s in smells)
+
+    def test_smell_no_metrics_returns_empty(self):
+        from code_review_graph.changes import _smell_tags_for_node
+        from code_review_graph.graph import GraphNode
+
+        node = GraphNode(
+            id=3, kind="Function", name="simple",
+            qualified_name="app.py::simple", file_path="app.py",
+            line_start=1, line_end=5, language="python",
+            parent_name=None, params=None, return_type=None,
+            is_test=False, file_hash=None,
+            complexity_score=None, cognitive_complexity=None,
+            param_count=None, nesting_depth=None,
+        )
+        assert _smell_tags_for_node(node) == []
+
+    # --- test_impact ---
+
+    def test_test_impact_counts_affected_tests(self):
+        self._add_func("authenticate", path="auth.py", line_start=1, line_end=20,
+                       extra={"complexity_score": 8})
+        self._add_func("test_authenticate", path="tests.py", is_test=True,
+                       line_start=1, line_end=5)
+        self._add_tested_by("tests.py::test_authenticate", "auth.py::authenticate")
+
+        result = analyze_changes(
+            self.store,
+            changed_files=["auth.py"],
+            changed_ranges={"auth.py": [(1, 20)]},
+        )
+        assert result["test_impact"]["tests_affected"] == 1
+
+    def test_test_impact_negative_delta_when_untested(self):
+        self._add_func("new_func", path="app.py", line_start=1, line_end=10)
+        result = analyze_changes(
+            self.store,
+            changed_files=["app.py"],
+            changed_ranges={"app.py": [(1, 10)]},
+        )
+        # No tests cover new_func → coverage delta should be negative or zero
+        assert result["test_impact"]["test_coverage_delta"] <= 0
+
+    # --- documentation_changes ---
+
+    def test_documentation_gap_detected(self):
+        self._add_func(
+            "undocumented",
+            path="app.py",
+            extra={"documentation_gap": 1, "has_docstring": False},
+        )
+        result = analyze_changes(
+            self.store,
+            changed_files=["app.py"],
+            changed_ranges={"app.py": [(1, 20)]},
+        )
+        assert result["documentation_changes"]["functions_now_undocumented"] >= 1
+
+    def test_documentation_present_detected(self):
+        self._add_func(
+            "documented",
+            path="app.py",
+            extra={"has_docstring": True, "documentation_gap": False},
+        )
+        result = analyze_changes(
+            self.store,
+            changed_files=["app.py"],
+            changed_ranges={"app.py": [(1, 20)]},
+        )
+        assert result["documentation_changes"]["functions_now_documented"] >= 1
+
+    # --- complexity_analysis total_delta when no history ---
+
+    def test_complexity_analysis_no_history(self):
+        self._add_func("fn", extra={"complexity_score": 12})
+        result = analyze_changes(
+            self.store,
+            changed_files=["app.py"],
+            changed_ranges={"app.py": [(1, 20)]},
+        )
+        # No prior metric history → delta unknown, total should be 0
+        assert result["complexity_analysis"]["total_complexity_delta"] == 0
+        assert result["complexity_analysis"]["functions_with_increased_complexity"] == []

@@ -14,6 +14,7 @@ Usage:
     code-review-graph register <path> [--alias name]
     code-review-graph unregister <path_or_alias>
     code-review-graph repos
+    code-review-graph health [--json]
 """
 
 from __future__ import annotations
@@ -87,6 +88,7 @@ def _print_banner() -> None:
     {g}unregister{r}  Remove a repository from the registry
     {g}repos{r}       List registered repositories
     {g}eval{r}        Run evaluation benchmarks
+    {g}health{r}      Code quality health report
     {g}serve{r}       Start MCP server
 
   {d}Run{r} {b}code-review-graph <command> --help{r} {d}for details{r}
@@ -149,6 +151,245 @@ def _handle_init(args: argparse.Namespace) -> None:
     print("  1. code-review-graph build    # build the knowledge graph")
     print("  2. Restart your AI coding tool to pick up the new config")
 
+
+
+def _handle_health(args: argparse.Namespace) -> None:
+    """Query the graph DB and print a code quality health report."""
+    import sqlite3
+
+    from .incremental import find_project_root, get_db_path
+
+    repo_root_arg = getattr(args, "repo", None)
+    from pathlib import Path as _Path
+    repo_root = _Path(repo_root_arg) if repo_root_arg else find_project_root()
+    db_path = get_db_path(repo_root)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+
+    # ---- documentation coverage ----
+    total_fns_row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM nodes WHERE kind = 'Function'"
+    ).fetchone()
+    total_fns: int = total_fns_row["cnt"] if total_fns_row else 0
+
+    documented_row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM nodes WHERE kind = 'Function' AND has_docstring = 1"
+    ).fetchone()
+    documented: int = documented_row["cnt"] if documented_row else 0
+
+    undoc_complex_rows = conn.execute(
+        """SELECT file_path, name, complexity_score
+           FROM nodes
+           WHERE kind = 'Function'
+             AND (has_docstring = 0 OR has_docstring IS NULL)
+             AND complexity_score IS NOT NULL
+           ORDER BY complexity_score DESC
+           LIMIT 10"""
+    ).fetchall()
+    undoc_complex = [dict(r) for r in undoc_complex_rows]
+
+    # ---- complexity ----
+    high_cc_rows = conn.execute(
+        """SELECT file_path, name, complexity_score, param_count
+           FROM nodes
+           WHERE kind = 'Function' AND complexity_score > 10
+           ORDER BY complexity_score DESC
+           LIMIT 50"""
+    ).fetchall()
+    high_cc = [dict(r) for r in high_cc_rows]
+
+    avg_cc_row = conn.execute(
+        "SELECT AVG(complexity_score) AS avg_cc FROM nodes "
+        "WHERE kind = 'Function' AND complexity_score IS NOT NULL"
+    ).fetchone()
+    avg_cc: float = round(avg_cc_row["avg_cc"] or 0.0, 1)
+
+    top10_cc_rows = conn.execute(
+        """SELECT file_path, name, complexity_score
+           FROM nodes
+           WHERE kind = 'Function' AND complexity_score IS NOT NULL
+           ORDER BY complexity_score DESC
+           LIMIT 10"""
+    ).fetchall()
+    top10_cc = [dict(r) for r in top10_cc_rows]
+
+    # ---- code smells ----
+    # God objects: classes with many direct function children
+    god_objects_rows = conn.execute(
+        """SELECT parent_name, file_path, COUNT(*) AS method_count
+           FROM nodes
+           WHERE kind = 'Function' AND parent_name IS NOT NULL AND parent_name != ''
+           GROUP BY parent_name, file_path
+           HAVING COUNT(*) >= 20
+           ORDER BY method_count DESC"""
+    ).fetchall()
+    god_objects = [dict(r) for r in god_objects_rows]
+
+    # Long parameter lists: param_count > 5
+    long_params_rows = conn.execute(
+        """SELECT file_path, name, param_count, complexity_score
+           FROM nodes
+           WHERE kind = 'Function' AND param_count > 5
+           ORDER BY param_count DESC
+           LIMIT 20"""
+    ).fetchall()
+    long_params = [dict(r) for r in long_params_rows]
+
+    # Deep nesting: nesting_depth > 4
+    deep_nesting_rows = conn.execute(
+        """SELECT file_path, name, nesting_depth
+           FROM nodes
+           WHERE kind = 'Function' AND nesting_depth > 4
+           ORDER BY nesting_depth DESC
+           LIMIT 20"""
+    ).fetchall()
+    deep_nesting = [dict(r) for r in deep_nesting_rows]
+
+    # Silent catches approximated via node annotations
+    silent_catch_rows = conn.execute(
+        """SELECT n.file_path, n.name
+           FROM node_annotations na
+           JOIN nodes n ON n.id = na.node_id
+           WHERE na.category = 'smell' AND na.tag = 'silent_catch'"""
+    ).fetchall() if _table_exists_h(conn, "node_annotations") else []
+    silent_catches = [dict(r) for r in silent_catch_rows]
+
+    # Unused imports via annotations
+    unused_import_rows = conn.execute(
+        """SELECT n.file_path, n.name
+           FROM node_annotations na
+           JOIN nodes n ON n.id = na.node_id
+           WHERE na.category = 'smell' AND na.tag = 'unused_import'"""
+    ).fetchall() if _table_exists_h(conn, "node_annotations") else []
+    unused_imports = [dict(r) for r in unused_import_rows]
+
+    conn.close()
+
+    # ---- top issues ----
+    top_issues: list[dict] = []
+    for row in high_cc[:10]:
+        fp = row["file_path"] or ""
+        fn = row["name"] or ""
+        cc = row["complexity_score"]
+        pc = row.get("param_count")
+        label = f"{fp}:{fn} - CC:{int(cc)}"
+        if pc and pc > 5:
+            label += f", {pc} params"
+        if any(r["parent_name"] == fn for r in god_objects):
+            label += ", god_object"
+        top_issues.append({"location": f"{fp}:{fn}", "cc": cc, "param_count": pc, "label": label})
+
+    total_smells = (
+        len(god_objects) + len(long_params) + len(deep_nesting)
+        + len(silent_catches) + len(unused_imports)
+    )
+    doc_gap_pct = round((1 - documented / total_fns) * 100, 1) if total_fns else 0.0
+    doc_pct = round(documented / total_fns * 100, 1) if total_fns else 0.0
+
+    payload: dict = {
+        "documentation": {
+            "total_functions": total_fns,
+            "documented": documented,
+            "documented_pct": doc_pct,
+            "documentation_gap_pct": doc_gap_pct,
+            "undocumented_high_complexity": undoc_complex,
+        },
+        "complexity": {
+            "functions_cc_above_10": len(high_cc),
+            "avg_cyclomatic_complexity": avg_cc,
+            "top10_most_complex": top10_cc,
+        },
+        "smells": {
+            "god_objects": god_objects,
+            "long_parameter_lists": long_params,
+            "deep_nesting": deep_nesting,
+            "silent_catches": silent_catches,
+            "unused_imports": unused_imports,
+            "total": total_smells,
+        },
+        "top_issues": top_issues,
+    }
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        import json as _json
+        print(_json.dumps(payload, indent=2, default=str))
+        return
+
+    color = _supports_color()
+    b = "\033[1m" if color else ""
+    r = "\033[0m" if color else ""
+    y = "\033[33m" if color else ""
+    g = "\033[32m" if color else ""
+    red = "\033[31m" if color else ""
+
+    def hdr(title: str) -> str:
+        return f"\n{b}{title}{r}"
+
+    def sep() -> str:
+        return "=" * 40
+
+    print(f"\n{b}CODE QUALITY HEALTH REPORT{r}")
+    print(sep())
+
+    # Documentation
+    print(hdr("Documentation Coverage"))
+    doc_color = g if doc_pct >= 80 else y if doc_pct >= 50 else red
+    doc_line = (
+        f"  Documented: {doc_color}{documented} / {total_fns}{r}"
+        f" functions ({doc_color}{doc_pct}%{r})"
+    )
+    print(doc_line)
+    print(f"  Undocumented high-complexity: {len(undoc_complex)} functions")
+    print(f"  Documentation gap: {doc_gap_pct}%")
+
+    # Complexity
+    print(hdr("Code Complexity"))
+    cc_color = g if len(high_cc) == 0 else y if len(high_cc) < 10 else red
+    print(f"  Functions with complexity > 10: {cc_color}{len(high_cc)}{r}")
+    print(f"  Avg cyclomatic complexity: {avg_cc}")
+    if top10_cc:
+        highest = top10_cc[0]
+        fp = highest["file_path"] or ""
+        fn = highest["name"] or ""
+        cc_val = int(highest["complexity_score"] or 0)
+        print(f"  Highest complexity: {fp}:{fn}() (CC={cc_val})")
+
+    # Smells
+    print(hdr("Code Smells Detected"))
+    print(f"  God objects (>=20 methods): {len(god_objects)}")
+    print(f"  Long parameter lists (>5 params): {len(long_params)}")
+    print(f"  Deep nesting (>4): {len(deep_nesting)}")
+    print(f"  Silent catch blocks: {len(silent_catches)}")
+    print(f"  Unused imports: {len(unused_imports)}")
+    smell_color = g if total_smells == 0 else y if total_smells < 10 else red
+    print(f"  Total smells: {smell_color}{total_smells}{r}")
+
+    # Top 10 most complex
+    if top10_cc:
+        print(hdr("Top 10 Most Complex Functions"))
+        for i, row in enumerate(top10_cc, 1):
+            fp = row["file_path"] or ""
+            fn = row["name"] or ""
+            cc_val = int(row["complexity_score"] or 0)
+            print(f"  {i:2}. {fp}:{fn}() - CC:{cc_val}")
+
+    # Top issues
+    if top_issues:
+        print(hdr("Top Issues to Fix"))
+        for i, issue in enumerate(top_issues[:10], 1):
+            print(f"  {i:2}. {issue['label']}")
+
+    print()
+
+
+def _table_exists_h(conn: object, table: str) -> bool:
+    """Check whether a table exists (used inside _handle_health)."""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return row is not None
 
 def main() -> None:
     """Main CLI entry point."""
@@ -299,6 +540,14 @@ def main() -> None:
     serve_cmd = sub.add_parser("serve", help="Start MCP server (stdio transport)")
     serve_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
 
+    # health
+    health_cmd = sub.add_parser("health", help="Code quality health report")
+    health_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+    health_cmd.add_argument(
+        "--json", action="store_true", dest="json",
+        help="Output as machine-readable JSON",
+    )
+
     args = ap.parse_args()
 
     if args.version:
@@ -312,6 +561,10 @@ def main() -> None:
     if args.command == "serve":
         from .main import main as serve_main
         serve_main(repo_root=args.repo)
+        return
+
+    if args.command == "health":
+        _handle_health(args)
         return
 
     if args.command == "eval":

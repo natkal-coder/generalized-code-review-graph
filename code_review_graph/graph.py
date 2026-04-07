@@ -11,7 +11,7 @@ import json
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
@@ -85,7 +85,14 @@ class GraphNode:
     return_type: Optional[str]
     is_test: bool
     file_hash: Optional[str]
-    extra: dict
+    extra: dict = field(default_factory=dict)
+    # Code quality metrics — populated from DB columns added in migrations v4/v5
+    complexity_score: Optional[float] = None
+    cognitive_complexity: Optional[float] = None
+    param_count: Optional[int] = None
+    nesting_depth: Optional[int] = None
+    has_docstring: bool = False
+    documentation_gap: bool = False
 
 
 @dataclass
@@ -164,14 +171,30 @@ class GraphStore:
         """Insert or update a node. Returns the node ID."""
         now = time.time()
         qualified = self._make_qualified(node)
-        extra = json.dumps(node.extra) if node.extra else "{}"
+        extra_dict = node.extra or {}
+        extra = json.dumps(extra_dict)
+
+        # Extract readability/complexity fields from extra
+        docstring_summary: Optional[str] = extra_dict.get("docstring_summary")
+        intent_tags_raw = extra_dict.get("intent_tags")
+        intent_tags: Optional[str] = json.dumps(intent_tags_raw) if intent_tags_raw is not None else None
+        has_docstring: int = int(bool(extra_dict.get("has_docstring", False)))
+        documentation_gap: int = int(bool(extra_dict.get("documentation_gap", False)))
+        complexity_score: Optional[float] = extra_dict.get("complexity_score")
+        cognitive_complexity: Optional[float] = extra_dict.get("cognitive_complexity")
+        param_count: Optional[int] = extra_dict.get("param_count")
+        nesting_depth: Optional[int] = extra_dict.get("nesting_depth")
+        smell_tags_raw = extra_dict.get("smell_tags")
+        smell_tags: Optional[str] = json.dumps(smell_tags_raw) if smell_tags_raw is not None else None
 
         self._conn.execute(
             """INSERT INTO nodes
                (kind, name, qualified_name, file_path, line_start, line_end,
                 language, parent_name, params, return_type, modifiers, is_test,
-                file_hash, extra, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                file_hash, extra, updated_at,
+                docstring_summary, intent_tags, has_docstring, documentation_gap,
+                complexity_score, cognitive_complexity, param_count, nesting_depth, smell_tags)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(qualified_name) DO UPDATE SET
                  kind=excluded.kind, name=excluded.name,
                  file_path=excluded.file_path, line_start=excluded.line_start,
@@ -179,7 +202,16 @@ class GraphStore:
                  parent_name=excluded.parent_name, params=excluded.params,
                  return_type=excluded.return_type, modifiers=excluded.modifiers,
                  is_test=excluded.is_test, file_hash=excluded.file_hash,
-                 extra=excluded.extra, updated_at=excluded.updated_at
+                 extra=excluded.extra, updated_at=excluded.updated_at,
+                 docstring_summary=excluded.docstring_summary,
+                 intent_tags=excluded.intent_tags,
+                 has_docstring=excluded.has_docstring,
+                 documentation_gap=excluded.documentation_gap,
+                 complexity_score=excluded.complexity_score,
+                 cognitive_complexity=excluded.cognitive_complexity,
+                 param_count=excluded.param_count,
+                 nesting_depth=excluded.nesting_depth,
+                 smell_tags=excluded.smell_tags
             """,
             (
                 node.kind, node.name, qualified, node.file_path,
@@ -187,12 +219,37 @@ class GraphStore:
                 node.parent_name, node.params, node.return_type,
                 node.modifiers, int(node.is_test), file_hash,
                 extra, now,
+                docstring_summary, intent_tags, has_docstring, documentation_gap,
+                complexity_score, cognitive_complexity, param_count, nesting_depth, smell_tags,
             ),
         )
         row = self._conn.execute(
             "SELECT id FROM nodes WHERE qualified_name = ?", (qualified,)
         ).fetchone()
-        return row["id"]
+        node_id: int = row["id"]
+
+        # Persist numeric complexity metrics to node_metrics table
+        metrics: dict[str, Optional[float]] = {
+            "complexity_score": complexity_score,
+            "cognitive_complexity": (
+                float(cognitive_complexity) if cognitive_complexity is not None else None
+            ),
+            "param_count": float(param_count) if param_count is not None else None,
+            "nesting_depth": float(nesting_depth) if nesting_depth is not None else None,
+        }
+        for metric, value in metrics.items():
+            if value is not None:
+                self._conn.execute(
+                    """INSERT INTO node_metrics (node_id, metric, value)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(node_id, metric) DO UPDATE SET
+                         value=excluded.value,
+                         recorded_at=datetime('now')
+                    """,
+                    (node_id, metric, value),
+                )
+
+        return node_id
 
     def upsert_edge(self, edge: EdgeInfo) -> int:
         """Insert or update an edge."""
@@ -827,6 +884,12 @@ class GraphStore:
         return f"{node.file_path}::{node.name}"
 
     def _row_to_node(self, row: sqlite3.Row) -> GraphNode:
+        keys = row.keys()
+
+        def _col(name: str, default: Any = None) -> Any:
+            """Safe column access — returns default if column absent (older schema)."""
+            return row[name] if name in keys else default
+
         return GraphNode(
             id=row["id"],
             kind=row["kind"],
@@ -842,6 +905,12 @@ class GraphStore:
             is_test=bool(row["is_test"]),
             file_hash=row["file_hash"],
             extra=json.loads(row["extra"]) if row["extra"] else {},
+            complexity_score=_col("complexity_score"),
+            cognitive_complexity=_col("cognitive_complexity"),
+            param_count=_col("param_count"),
+            nesting_depth=_col("nesting_depth"),
+            has_docstring=bool(_col("has_docstring", 0)),
+            documentation_gap=bool(_col("documentation_gap", 0)),
         )
 
     def _row_to_edge(self, row: sqlite3.Row) -> GraphEdge:

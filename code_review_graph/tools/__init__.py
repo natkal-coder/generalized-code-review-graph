@@ -62,8 +62,11 @@ from .flows_tools import get_flow, list_flows
 # -- query ------------------------------------------------------------------
 from .query import (
     find_large_functions,
+    get_code_quality_warnings,
+    get_code_smells,
     get_impact_radius,
     list_graph_stats,
+    list_undocumented_functions,
     query_graph,
     semantic_search_nodes,
 )
@@ -102,6 +105,9 @@ __all__ = [
     "list_flows",
     # query
     "find_large_functions",
+    "get_code_quality_warnings",
+    "get_code_smells",
+    "list_undocumented_functions",
     "get_impact_radius",
     "list_graph_stats",
     "query_graph",

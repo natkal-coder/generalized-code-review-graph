@@ -178,3 +178,145 @@ class TestGraphStore:
         self.store.set_metadata("test_key", "test_value")
         assert self.store.get_metadata("test_key") == "test_value"
         assert self.store.get_metadata("nonexistent") is None
+
+
+# ---------------------------------------------------------------------------
+# Sprint 1: Graph persistence of readability fields
+# ---------------------------------------------------------------------------
+
+class TestReadabilityFieldPersistence:
+    """Tests that upsert_node persists readability fields to nodes and node_metrics."""
+
+    def setup_method(self):
+        import tempfile
+        from pathlib import Path
+        from code_review_graph.graph import GraphStore
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.store = GraphStore(self.tmp.name)
+        self._tmp_path = Path(self.tmp.name)
+
+    def teardown_method(self):
+        self.store.close()
+        self._tmp_path.unlink(missing_ok=True)
+
+    def _make_node(self, name="func", extra=None):
+        from code_review_graph.parser import NodeInfo
+        return NodeInfo(
+            kind="Function", name=name, file_path="/test/f.py",
+            line_start=1, line_end=10, language="python",
+            extra=extra or {},
+        )
+
+    def test_has_docstring_persisted(self):
+        node = self._make_node(extra={"has_docstring": True, "docstring_summary": "Does X"})
+        self.store.upsert_node(node)
+        self.store.commit()
+        row = self.store._conn.execute(
+            "SELECT has_docstring, docstring_summary FROM nodes WHERE name=?", ("func",)
+        ).fetchone()
+        assert row["has_docstring"] == 1
+        assert row["docstring_summary"] == "Does X"
+
+    def test_intent_tags_stored_as_json(self):
+        node = self._make_node(extra={"intent_tags": ["TODO", "FIXME"]})
+        self.store.upsert_node(node)
+        self.store.commit()
+        row = self.store._conn.execute(
+            "SELECT intent_tags FROM nodes WHERE name=?", ("func",)
+        ).fetchone()
+        import json
+        tags = json.loads(row["intent_tags"])
+        assert "TODO" in tags
+        assert "FIXME" in tags
+
+    def test_documentation_gap_persisted(self):
+        node = self._make_node(extra={"documentation_gap": True})
+        self.store.upsert_node(node)
+        self.store.commit()
+        row = self.store._conn.execute(
+            "SELECT documentation_gap FROM nodes WHERE name=?", ("func",)
+        ).fetchone()
+        assert row["documentation_gap"] == 1
+
+    def test_complexity_score_in_nodes_and_metrics(self):
+        node = self._make_node(extra={"complexity_score": 4.0})
+        node_id = self.store.upsert_node(node)
+        self.store.commit()
+        row = self.store._conn.execute(
+            "SELECT complexity_score FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        assert row["complexity_score"] == 4.0
+        metric_row = self.store._conn.execute(
+            "SELECT value FROM node_metrics WHERE node_id=? AND metric=?",
+            (node_id, "complexity_score"),
+        ).fetchone()
+        assert metric_row is not None
+        assert metric_row["value"] == 4.0
+
+    def test_cognitive_complexity_in_nodes_and_metrics(self):
+        node = self._make_node(extra={"cognitive_complexity": 7.0})
+        node_id = self.store.upsert_node(node)
+        self.store.commit()
+        row = self.store._conn.execute(
+            "SELECT cognitive_complexity FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        assert row["cognitive_complexity"] == 7.0
+        metric_row = self.store._conn.execute(
+            "SELECT value FROM node_metrics WHERE node_id=? AND metric=?",
+            (node_id, "cognitive_complexity"),
+        ).fetchone()
+        assert metric_row["value"] == 7.0
+
+    def test_param_count_in_nodes_and_metrics(self):
+        node = self._make_node(extra={"param_count": 6})
+        node_id = self.store.upsert_node(node)
+        self.store.commit()
+        row = self.store._conn.execute(
+            "SELECT param_count FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        assert row["param_count"] == 6
+        metric_row = self.store._conn.execute(
+            "SELECT value FROM node_metrics WHERE node_id=? AND metric=?",
+            (node_id, "param_count"),
+        ).fetchone()
+        assert metric_row["value"] == 6.0
+
+    def test_nesting_depth_in_nodes_and_metrics(self):
+        node = self._make_node(extra={"nesting_depth": 3})
+        node_id = self.store.upsert_node(node)
+        self.store.commit()
+        row = self.store._conn.execute(
+            "SELECT nesting_depth FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        assert row["nesting_depth"] == 3
+        metric_row = self.store._conn.execute(
+            "SELECT value FROM node_metrics WHERE node_id=? AND metric=?",
+            (node_id, "nesting_depth"),
+        ).fetchone()
+        assert metric_row["value"] == 3.0
+
+    def test_upsert_updates_metrics_on_conflict(self):
+        """Re-upserting a node with changed complexity_score updates node_metrics."""
+        node = self._make_node(extra={"complexity_score": 2.0})
+        node_id = self.store.upsert_node(node)
+        self.store.commit()
+
+        updated = self._make_node(extra={"complexity_score": 9.0})
+        self.store.upsert_node(updated)
+        self.store.commit()
+
+        metric_row = self.store._conn.execute(
+            "SELECT value FROM node_metrics WHERE node_id=? AND metric=?",
+            (node_id, "complexity_score"),
+        ).fetchone()
+        assert metric_row["value"] == 9.0
+
+    def test_none_metric_not_inserted(self):
+        """Metrics absent from extra should not appear in node_metrics."""
+        node = self._make_node(extra={})
+        node_id = self.store.upsert_node(node)
+        self.store.commit()
+        rows = self.store._conn.execute(
+            "SELECT * FROM node_metrics WHERE node_id=?", (node_id,)
+        ).fetchall()
+        assert len(rows) == 0

@@ -121,3 +121,46 @@ def _get_table_names(conn: sqlite3.Connection) -> set[str]:
         "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
     ).fetchall()
     return {row[0] if isinstance(row, (tuple, list)) else row["name"] for row in rows}
+
+    def test_v6_quality_columns_exist(self):
+        """Migration v6 must add quality columns to nodes."""
+        cursor = self.store._conn.execute("PRAGMA table_info(nodes)")
+        columns = {row[1] if isinstance(row, tuple) else row["name"] for row in cursor}
+        for col in ("complexity_score", "has_docstring", "docstring_summary"):
+            assert col in columns, f"Missing column: {col}"
+
+    def test_v7_readability_columns_exist(self):
+        """Migration v7 must add readability columns to nodes."""
+        cursor = self.store._conn.execute("PRAGMA table_info(nodes)")
+        columns = {row[1] if isinstance(row, tuple) else row["name"] for row in cursor}
+        for col in ("intent_tags", "documentation_gap", "cognitive_complexity", "param_count", "nesting_depth"):
+            assert col in columns, f"Missing column: {col}"
+
+    def test_v6_node_metrics_table_exists(self):
+        """Migration v6 must create node_metrics table."""
+        tables = _get_table_names(self.store._conn)
+        assert "node_metrics" in tables
+
+    def test_v6_node_annotations_table_exists(self):
+        """Migration v6 must create node_annotations table."""
+        tables = _get_table_names(self.store._conn)
+        assert "node_annotations" in tables
+
+    def test_v6_v7_migrations_idempotent(self):
+        """Re-opening GraphStore after v6+v7 should stay at LATEST_VERSION."""
+        self.store.close()
+        self.store = GraphStore(self.tmp.name)
+        from code_review_graph.migrations import LATEST_VERSION, get_schema_version
+        assert get_schema_version(self.store._conn) == LATEST_VERSION
+
+    def test_migration_v7_idempotent_columns(self):
+        """Running migration v7 twice must not raise (IF NOT EXISTS / column check)."""
+        import sqlite3 as _sqlite3
+        from code_review_graph.migrations import MIGRATIONS
+        conn = self.store._conn
+        # Run v7 a second time explicitly — should be a no-op
+        MIGRATIONS[7](conn)
+        conn.commit()
+        cursor = conn.execute("PRAGMA table_info(nodes)")
+        columns = [row[1] if isinstance(row, tuple) else row["name"] for row in cursor]
+        assert columns.count("nesting_depth") == 1

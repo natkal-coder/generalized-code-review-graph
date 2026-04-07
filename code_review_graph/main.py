@@ -27,6 +27,8 @@ from .tools import (
     generate_wiki_func,
     get_affected_flows_func,
     get_architecture_overview_func,
+    get_code_quality_warnings,
+    get_code_smells,
     get_community_func,
     get_docs_section,
     get_flow,
@@ -37,6 +39,7 @@ from .tools import (
     list_flows,
     list_graph_stats,
     list_repos_func,
+    list_undocumented_functions,
     query_graph,
     refactor_func,
     semantic_search_nodes,
@@ -552,6 +555,78 @@ def cross_repo_search_tool(
         limit: Maximum results per repo. Default: 20.
     """
     return cross_repo_search_func(query=query, kind=kind, limit=limit)
+
+
+@mcp.tool()
+def get_code_quality_warnings_tool(
+    min_complexity: int = 10,
+    file_path: Optional[str] = None,
+    limit: int = 20,
+    repo_root: Optional[str] = None,
+) -> dict:
+    """Find functions and classes exceeding a cyclomatic complexity threshold.
+
+    Useful for identifying refactoring targets and code-quality hotspots.
+    Results are sorted by complexity_score DESC.
+
+    Args:
+        min_complexity: Minimum cyclomatic complexity score to flag. Default: 10.
+        file_path: Filter by file path substring (e.g. 'src/').
+        limit: Maximum results. Default: 20.
+        repo_root: Repository root path. Auto-detected if omitted.
+    """
+    return get_code_quality_warnings(
+        min_complexity=min_complexity, file_path=file_path,
+        limit=limit, repo_root=repo_root,
+    )
+
+
+@mcp.tool()
+def get_code_smells_tool(
+    smell_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    file_path: Optional[str] = None,
+    limit: int = 20,
+    repo_root: Optional[str] = None,
+) -> dict:
+    """Query nodes by code smell type and/or severity.
+
+    smell_type values: god_object, long_param_list, deep_nesting,
+                       magic_numbers, silent_catch, unused_imports.
+    severity values: critical, high, medium, low.
+
+    Args:
+        smell_type: Filter by specific smell. Returns all smells if omitted.
+        severity: Filter by severity bucket. Returns all severities if omitted.
+        file_path: Filter by file path substring.
+        limit: Maximum results. Default: 20.
+        repo_root: Repository root path. Auto-detected if omitted.
+    """
+    return get_code_smells(
+        smell_type=smell_type, severity=severity,
+        file_path=file_path, limit=limit, repo_root=repo_root,
+    )
+
+
+@mcp.tool()
+def list_undocumented_functions_tool(
+    file_path: Optional[str] = None,
+    limit: int = 20,
+    repo_root: Optional[str] = None,
+) -> dict:
+    """List functions and methods missing documentation.
+
+    Returns nodes where documentation_gap=1, sorted by complexity_score DESC
+    so the most complex undocumented functions appear first.
+
+    Args:
+        file_path: Filter by file path substring.
+        limit: Maximum results. Default: 20.
+        repo_root: Repository root path. Auto-detected if omitted.
+    """
+    return list_undocumented_functions(
+        file_path=file_path, limit=limit, repo_root=repo_root,
+    )
 
 
 @mcp.prompt()

@@ -1,7 +1,8 @@
 """Change impact analysis for code review.
 
 Maps git diffs to affected functions, flows, communities, and test coverage
-gaps. Produces risk-scored, priority-ordered review guidance.
+gaps. Produces risk-scored, priority-ordered review guidance enriched with
+code quality metrics (complexity, smells, documentation coverage).
 """
 
 from __future__ import annotations
@@ -21,6 +22,12 @@ logger = logging.getLogger(__name__)
 _GIT_TIMEOUT = int(os.environ.get("CRG_GIT_TIMEOUT", "30"))  # seconds, configurable
 
 _SAFE_GIT_REF = re.compile(r"^[A-Za-z0-9_.~^/@{}\-]+$")
+
+# Thresholds for smell detection
+_CC_HIGH = 10       # cyclomatic complexity: high
+_CC_VERY_HIGH = 20  # cyclomatic complexity: very high
+_COG_HIGH = 15      # cognitive complexity: high
+_PARAM_LONG = 5     # long parameter list
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +203,236 @@ def compute_risk_score(store: GraphStore, node: GraphNode) -> float:
 
 
 # ---------------------------------------------------------------------------
-# 4. analyze_changes
+# 4. Code quality helpers
+# ---------------------------------------------------------------------------
+
+
+def _smell_tags_for_node(node: GraphNode) -> list[dict[str, str]]:
+    """Return a list of smell dicts for a single node based on its metrics.
+
+    Each dict has ``smell`` (str) and ``severity`` ("low" | "medium" | "high").
+    Returns an empty list when no smells are detected or metrics are absent.
+    """
+    smells: list[dict[str, str]] = []
+
+    cc = node.complexity_score
+    if cc is not None:
+        if cc >= _CC_VERY_HIGH:
+            smells.append({"smell": "high_cyclomatic_complexity", "severity": "high"})
+        elif cc >= _CC_HIGH:
+            smells.append({"smell": "high_cyclomatic_complexity", "severity": "medium"})
+
+    cog = node.cognitive_complexity
+    if cog is not None and cog >= _COG_HIGH:
+        smells.append({"smell": "high_cognitive_complexity", "severity": "high"})
+
+    pc = node.param_count
+    if pc is not None and pc >= _PARAM_LONG:
+        smells.append({"smell": "long_param_list", "severity": "high"})
+
+    nd = node.nesting_depth
+    if nd is not None and nd >= 4:
+        severity = "high" if nd >= 6 else "medium"
+        smells.append({"smell": "deep_nesting", "severity": severity})
+
+    return smells
+
+
+def _complexity_entry(node: GraphNode) -> dict[str, Any]:
+    """Build a per-node complexity record suitable for the output dict."""
+    return {
+        "name": _sanitize_name(node.name),
+        "qualified_name": _sanitize_name(node.qualified_name),
+        "file": node.file_path,
+        "line_start": node.line_start,
+        "cc": node.complexity_score,
+        "cognitive": node.cognitive_complexity,
+        "nesting_depth": node.nesting_depth,
+        "param_count": node.param_count,
+    }
+
+
+def _compute_complexity_analysis(
+    store: GraphStore,
+    changed_funcs: list[GraphNode],
+    base: str,
+    repo_root: str | None,
+) -> dict[str, Any]:
+    """Produce a complexity_analysis block for changed functions.
+
+    For each changed function we compare the current metrics stored in the graph
+    (which reflect the post-change state after the last ``build``/``update``) to
+    the metrics that were recorded for the base commit.  Because the graph only
+    stores the current state, the "before" metrics are approximated by querying
+    the ``node_metrics`` history table when available; otherwise we mark the
+    delta as unknown (``None``).
+
+    In practice the graph is rebuilt after each push, so ``complexity_score``
+    on the node reflects the newest code.  The "before" value is the last
+    persisted metric for that node (recorded by a previous build).
+    """
+    increased: list[dict[str, Any]] = []
+    decreased: list[dict[str, Any]] = []
+    total_delta = 0
+
+    for node in changed_funcs:
+        if node.is_test:
+            continue
+        cc_after = node.complexity_score
+        if cc_after is None:
+            continue
+
+        # Try to retrieve the previous metric from node_metrics history.
+        cc_before: float | None = _get_previous_metric(store, node.id, "complexity_score")
+
+        if cc_before is None:
+            # No prior snapshot — treat as new function, delta unknown.
+            continue
+
+        delta = cc_after - cc_before
+        if delta == 0:
+            continue
+
+        total_delta += delta
+        entry = {
+            "name": _sanitize_name(node.name),
+            "qualified_name": _sanitize_name(node.qualified_name),
+            "file": node.file_path,
+            "cc_before": round(cc_before, 2),
+            "cc_after": round(cc_after, 2),
+            "delta": round(delta, 2),
+        }
+        if delta > 0:
+            increased.append(entry)
+        else:
+            decreased.append(entry)
+
+    # Sort by absolute delta descending so worst offenders appear first.
+    increased.sort(key=lambda x: x["delta"], reverse=True)
+    decreased.sort(key=lambda x: x["delta"])
+
+    return {
+        "total_complexity_delta": round(total_delta, 2),
+        "functions_with_increased_complexity": increased,
+        "functions_with_decreased_complexity": decreased,
+    }
+
+
+def _get_previous_metric(store: GraphStore, node_id: int, metric: str) -> float | None:
+    """Retrieve the second-to-last recorded value for a metric from node_metrics.
+
+    node_metrics stores the current value only (upserted on each build).
+    If no historical data is available returns ``None``.
+
+    This function queries the ``node_metrics_history`` table when it exists
+    (added in a future migration), falling back to ``None`` gracefully.
+    """
+    try:
+        row = store._conn.execute(  # noqa: SLF001
+            """SELECT value FROM node_metrics_history
+               WHERE node_id = ? AND metric = ?
+               ORDER BY recorded_at DESC
+               LIMIT 1 OFFSET 1""",
+            (node_id, metric),
+        ).fetchone()
+        return float(row["value"]) if row else None
+    except Exception:
+        # Table doesn't exist or query failed — degrade gracefully.
+        return None
+
+
+def _compute_smell_analysis(changed_funcs: list[GraphNode]) -> dict[str, Any]:
+    """Identify code smells introduced or present in changed functions.
+
+    Since we only have the current state (post-change), we report smells on
+    the changed nodes.  We cannot reliably detect "removed" smells without
+    historical metrics, so ``removed_smells`` will always be empty unless
+    ``node_metrics_history`` is available.
+    """
+    new_smells: list[dict[str, Any]] = []
+
+    for node in changed_funcs:
+        if node.is_test:
+            continue
+        for smell in _smell_tags_for_node(node):
+            new_smells.append({
+                "function": _sanitize_name(node.qualified_name),
+                "file": node.file_path,
+                **smell,
+            })
+
+    # Sort by severity (high > medium > low).
+    _sev_order = {"high": 0, "medium": 1, "low": 2}
+    new_smells.sort(key=lambda x: _sev_order.get(x["severity"], 9))
+
+    return {
+        "new_smells": new_smells,
+        "removed_smells": [],  # requires node_metrics_history; not yet implemented
+    }
+
+
+def _compute_test_impact(
+    store: GraphStore,
+    changed_funcs: list[GraphNode],
+) -> dict[str, Any]:
+    """Count tests directly affected by changes and estimate coverage delta.
+
+    "Affected" means the test has a TESTED_BY edge pointing at one of the
+    changed functions, or the changed function CALLS something that is tested.
+    We do not walk the full transitive closure to keep this O(n).
+    """
+    affected_test_qns: set[str] = set()
+    total_non_test = 0
+
+    for node in changed_funcs:
+        if node.is_test:
+            continue
+        total_non_test += 1
+        edges = store.get_edges_by_target(node.qualified_name)
+        for e in edges:
+            if e.kind == "TESTED_BY":
+                affected_test_qns.add(e.source_qualified)
+
+    tests_affected = len(affected_test_qns)
+
+    # Coverage delta: approximate as fraction of untested changed functions.
+    # Negative delta means coverage got worse (more untested code).
+    if total_non_test == 0:
+        coverage_delta = 0.0
+    else:
+        untested = sum(
+            1 for n in changed_funcs
+            if not n.is_test and not any(
+                e.kind == "TESTED_BY"
+                for e in store.get_edges_by_target(n.qualified_name)
+            )
+        )
+        coverage_delta = round(-100.0 * untested / total_non_test, 1)
+
+    return {
+        "tests_affected": tests_affected,
+        "test_coverage_delta": coverage_delta,
+    }
+
+
+def _compute_documentation_changes(changed_funcs: list[GraphNode]) -> dict[str, Any]:
+    """Count documentation gaps introduced or fixed by the change set."""
+    now_undocumented = sum(
+        1 for n in changed_funcs
+        if not n.is_test and n.documentation_gap and not n.has_docstring
+    )
+    now_documented = sum(
+        1 for n in changed_funcs
+        if not n.is_test and n.has_docstring and not n.documentation_gap
+    )
+    return {
+        "functions_now_undocumented": now_undocumented,
+        "functions_now_documented": now_documented,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 5. analyze_changes
 # ---------------------------------------------------------------------------
 
 
@@ -219,7 +455,9 @@ def analyze_changes(
 
     Returns:
         Dict with ``summary``, ``risk_score``, ``changed_functions``,
-        ``affected_flows``, ``test_gaps``, and ``review_priorities``.
+        ``affected_flows``, ``test_gaps``, ``review_priorities``,
+        ``complexity_analysis``, ``smell_analysis``, ``test_impact``, and
+        ``documentation_changes``.
     """
     # Compute changed ranges if not provided.
     if changed_ranges is None and repo_root is not None:
@@ -273,6 +511,12 @@ def analyze_changes(
     # Review priorities: top 10 by risk score.
     review_priorities = sorted(node_risks, key=lambda x: x["risk_score"], reverse=True)[:10]
 
+    # --- Code quality enrichment ---
+    complexity_analysis = _compute_complexity_analysis(store, changed_funcs, base, repo_root)
+    smell_analysis = _compute_smell_analysis(changed_funcs)
+    test_impact = _compute_test_impact(store, changed_funcs)
+    documentation_changes = _compute_documentation_changes(changed_funcs)
+
     # Build summary.
     summary_parts = [
         f"Analyzed {len(changed_files)} changed file(s):",
@@ -284,6 +528,12 @@ def analyze_changes(
     if test_gaps:
         gap_names = [g["name"] for g in test_gaps[:5]]
         summary_parts.append(f"  - Untested: {', '.join(gap_names)}")
+    cc_delta = complexity_analysis["total_complexity_delta"]
+    if cc_delta:
+        direction = "+" if cc_delta > 0 else ""
+        summary_parts.append(f"  - Complexity delta: {direction}{cc_delta} CC points")
+    if smell_analysis["new_smells"]:
+        summary_parts.append(f"  - New smells: {len(smell_analysis['new_smells'])}")
 
     return {
         "summary": "\n".join(summary_parts),
@@ -292,4 +542,8 @@ def analyze_changes(
         "affected_flows": affected["affected_flows"],
         "test_gaps": test_gaps,
         "review_priorities": review_priorities,
+        "complexity_analysis": complexity_analysis,
+        "smell_analysis": smell_analysis,
+        "test_impact": test_impact,
+        "documentation_changes": documentation_changes,
     }

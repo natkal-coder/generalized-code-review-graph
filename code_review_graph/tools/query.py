@@ -486,3 +486,356 @@ def find_large_functions(
         }
     finally:
         store.close()
+
+# ---------------------------------------------------------------------------
+# Tool 23: get_code_quality_warnings
+# ---------------------------------------------------------------------------
+
+_VALID_SMELL_TYPES = frozenset(
+    [
+        "god_object", "long_param_list", "deep_nesting",
+        "magic_numbers", "silent_catch", "unused_imports",
+    ]
+)
+_VALID_SEVERITIES = frozenset(["critical", "high", "medium", "low"])
+
+_SMELL_EXPLANATIONS: dict[str, str] = {
+    "god_object": "Class >= 300 lines; likely handles too many responsibilities.",
+    "long_param_list": "Function has 5+ parameters; consider a config object.",
+    "deep_nesting": "Control flow nests >= 4 levels deep; use early returns.",
+    "magic_numbers": "High cyclomatic complexity likely contains unexplained constants.",
+    "silent_catch": "Detected via annotation; exception swallowed without logging.",
+    "unused_imports": "Detected via annotation; import not referenced in file.",
+}
+
+
+def _derive_smells(
+    kind: str,
+    complexity_score: float | None,
+    cognitive_complexity: float | None,
+    param_count: int | None,
+    nesting_depth: int | None,
+    line_count: int,
+) -> list[str]:
+    """Derive smell tags from metric thresholds."""
+    smells: list[str] = []
+    if kind == "Class" and line_count >= 300:
+        smells.append("god_object")
+    if param_count is not None and param_count >= 5:
+        smells.append("long_param_list")
+    if nesting_depth is not None and nesting_depth >= 4:
+        smells.append("deep_nesting")
+    if complexity_score is not None and complexity_score >= 10:
+        smells.append("magic_numbers")  # proxy: high cyclomatic often has magic constants
+    return smells
+
+
+def _smell_severity(smell_tags: list[str], complexity_score: float | None) -> str:
+    """Map smell list + complexity to a severity bucket."""
+    score = complexity_score or 0
+    count = len(smell_tags)
+    if count >= 3 or score >= 25:
+        return "critical"
+    if count == 2 or score >= 15:
+        return "high"
+    if count == 1 or score >= 10:
+        return "medium"
+    return "low"
+
+
+def get_code_quality_warnings(
+    min_complexity: int = 10,
+    file_path: str | None = None,
+    limit: int = 20,
+    repo_root: str | None = None,
+) -> dict[str, Any]:
+    """Query nodes exceeding a cyclomatic complexity threshold.
+
+    Args:
+        min_complexity: Minimum complexity_score to flag (default: 10).
+        file_path: Filter by file path substring (e.g. "src/").
+        limit: Maximum results (default: 20).
+        repo_root: Repository root path. Auto-detected if omitted.
+
+    Returns:
+        {status, data, summary} with nodes ordered by complexity_score DESC.
+        Each entry contains name, type, file, complexity_score,
+        cognitive_complexity, param_count, nesting_depth, smell_tags.
+    """
+    store, root = _get_store(repo_root)
+    try:
+        params: list[Any] = [float(min_complexity)]
+        sql = """
+            SELECT
+                name, kind, file_path,
+                line_start, line_end,
+                complexity_score,
+                cognitive_complexity,
+                param_count,
+                nesting_depth
+            FROM nodes
+            WHERE complexity_score >= ?
+        """
+        if file_path:
+            sql += " AND file_path LIKE ?"
+            params.append(f"%{file_path}%")
+        sql += " ORDER BY complexity_score DESC LIMIT ?"
+        params.append(limit)
+
+        rows = store._conn.execute(sql, params).fetchall()
+
+        data: list[dict[str, Any]] = []
+        for row in rows:
+            line_count = (
+                (row["line_end"] - row["line_start"] + 1)
+                if row["line_start"] is not None and row["line_end"] is not None
+                else 0
+            )
+            smells = _derive_smells(
+                row["kind"],
+                row["complexity_score"],
+                row["cognitive_complexity"],
+                row["param_count"],
+                row["nesting_depth"],
+                line_count,
+            )
+            try:
+                rel_file = str(Path(row["file_path"]).relative_to(root))
+            except ValueError:
+                rel_file = row["file_path"]
+            data.append({
+                "name": row["name"],
+                "type": row["kind"],
+                "file": rel_file,
+                "complexity_score": row["complexity_score"],
+                "cognitive_complexity": row["cognitive_complexity"],
+                "param_count": row["param_count"],
+                "nesting_depth": row["nesting_depth"],
+                "smell_tags": smells,
+            })
+
+        summary = (
+            f"Found {len(data)} node(s) with complexity >= {min_complexity}"
+            + (f" in '{file_path}'" if file_path else "")
+        )
+        return {"status": "ok", "summary": summary, "data": data}
+    except Exception as exc:
+        logger.warning("get_code_quality_warnings error: %s", exc)
+        return {"status": "error", "summary": str(exc), "data": []}
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 24: get_code_smells
+# ---------------------------------------------------------------------------
+
+
+def get_code_smells(
+    smell_type: str | None = None,
+    severity: str | None = None,
+    file_path: str | None = None,
+    limit: int = 20,
+    repo_root: str | None = None,
+) -> dict[str, Any]:
+    """Query nodes by code smell type and/or severity.
+
+    smell_type values: god_object, long_param_list, deep_nesting,
+                       magic_numbers, silent_catch, unused_imports.
+    severity values: critical, high, medium, low.
+
+    Args:
+        smell_type: Filter by specific smell. Returns all smells if omitted.
+        severity: Filter by severity bucket. Returns all severities if omitted.
+        file_path: Filter by file path substring.
+        limit: Maximum results (default: 20).
+        repo_root: Repository root path. Auto-detected if omitted.
+
+    Returns:
+        {status, data, summary} with nodes that exhibit the requested smell.
+        Each entry contains name, type, file, smell_tags, complexity_score,
+        explanation.
+    """
+    if smell_type and smell_type not in _VALID_SMELL_TYPES:
+        return {
+            "status": "error",
+            "summary": (
+                f"Unknown smell_type '{smell_type}'. "
+                f"Valid values: {sorted(_VALID_SMELL_TYPES)}"
+            ),
+            "data": [],
+        }
+    if severity and severity not in _VALID_SEVERITIES:
+        return {
+            "status": "error",
+            "summary": (
+                f"Unknown severity '{severity}'. "
+                f"Valid values: {sorted(_VALID_SEVERITIES)}"
+            ),
+            "data": [],
+        }
+
+    store, root = _get_store(repo_root)
+    try:
+        # Pull all nodes that have at least one non-null metric to derive smells from.
+        params: list[Any] = []
+        sql = """
+            SELECT
+                name, kind, file_path,
+                line_start, line_end,
+                complexity_score,
+                cognitive_complexity,
+                param_count,
+                nesting_depth
+            FROM nodes
+            WHERE (
+                complexity_score IS NOT NULL
+                OR cognitive_complexity IS NOT NULL
+                OR param_count IS NOT NULL
+                OR nesting_depth IS NOT NULL
+            )
+        """
+        if file_path:
+            sql += " AND file_path LIKE ?"
+            params.append(f"%{file_path}%")
+        # Fetch more than limit so we can filter by smell/severity before truncating.
+        sql += " ORDER BY complexity_score DESC LIMIT ?"
+        params.append(limit * 10)
+
+        rows = store._conn.execute(sql, params).fetchall()
+
+        data: list[dict[str, Any]] = []
+        for row in rows:
+            line_count = (
+                (row["line_end"] - row["line_start"] + 1)
+                if row["line_start"] is not None and row["line_end"] is not None
+                else 0
+            )
+            smells = _derive_smells(
+                row["kind"],
+                row["complexity_score"],
+                row["cognitive_complexity"],
+                row["param_count"],
+                row["nesting_depth"],
+                line_count,
+            )
+            if not smells:
+                continue
+            row_severity = _smell_severity(smells, row["complexity_score"])
+            if smell_type and smell_type not in smells:
+                continue
+            if severity and row_severity != severity:
+                continue
+            try:
+                rel_file = str(Path(row["file_path"]).relative_to(root))
+            except ValueError:
+                rel_file = row["file_path"]
+            active_smells = [smell_type] if smell_type else smells
+            data.append({
+                "name": row["name"],
+                "type": row["kind"],
+                "file": rel_file,
+                "smell_tags": active_smells,
+                "severity": row_severity,
+                "complexity_score": row["complexity_score"],
+                "explanation": " | ".join(
+                    _SMELL_EXPLANATIONS[s] for s in active_smells if s in _SMELL_EXPLANATIONS
+                ),
+            })
+            if len(data) >= limit:
+                break
+
+        filter_desc = " | ".join(
+            p for p in [
+                f"smell={smell_type}" if smell_type else None,
+                f"severity={severity}" if severity else None,
+                f"file='{file_path}'" if file_path else None,
+            ]
+            if p
+        )
+        summary = f"Found {len(data)} smell(s)" + (f" [{filter_desc}]" if filter_desc else "")
+        return {"status": "ok", "summary": summary, "data": data}
+    except Exception as exc:
+        logger.warning("get_code_smells error: %s", exc)
+        return {"status": "error", "summary": str(exc), "data": []}
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 25: list_undocumented_functions
+# ---------------------------------------------------------------------------
+
+
+def list_undocumented_functions(
+    file_path: str | None = None,
+    limit: int = 20,
+    repo_root: str | None = None,
+) -> dict[str, Any]:
+    """Query functions and methods missing documentation (documentation_gap=1).
+
+    Results are sorted by complexity_score DESC so the most complex
+    undocumented functions surface first.
+
+    Args:
+        file_path: Filter by file path substring.
+        limit: Maximum results (default: 20).
+        repo_root: Repository root path. Auto-detected if omitted.
+
+    Returns:
+        {status, data, summary} with undocumented nodes.
+        Each entry contains name, file, lines, complexity_score,
+        cognitive_complexity.
+    """
+    store, root = _get_store(repo_root)
+    try:
+        params: list[Any] = []
+        sql = """
+            SELECT
+                name, kind, file_path,
+                line_start, line_end,
+                complexity_score,
+                cognitive_complexity
+            FROM nodes
+            WHERE documentation_gap = 1
+              AND kind IN ('Function', 'Test')
+        """
+        if file_path:
+            sql += " AND file_path LIKE ?"
+            params.append(f"%{file_path}%")
+        sql += " ORDER BY complexity_score DESC NULLS LAST LIMIT ?"
+        params.append(limit)
+
+        rows = store._conn.execute(sql, params).fetchall()
+
+        data: list[dict[str, Any]] = []
+        for row in rows:
+            line_count = (
+                (row["line_end"] - row["line_start"] + 1)
+                if row["line_start"] is not None and row["line_end"] is not None
+                else 0
+            )
+            try:
+                rel_file = str(Path(row["file_path"]).relative_to(root))
+            except ValueError:
+                rel_file = row["file_path"]
+            data.append({
+                "name": row["name"],
+                "type": row["kind"],
+                "file": rel_file,
+                "lines": line_count,
+                "complexity_score": row["complexity_score"],
+                "cognitive_complexity": row["cognitive_complexity"],
+            })
+
+        summary = (
+            f"Found {len(data)} undocumented function(s)"
+            + (f" in '{file_path}'" if file_path else "")
+            + " (sorted by complexity, highest first)"
+        )
+        return {"status": "ok", "summary": summary, "data": data}
+    except Exception as exc:
+        logger.warning("list_undocumented_functions error: %s", exc)
+        return {"status": "error", "summary": str(exc), "data": []}
+    finally:
+        store.close()

@@ -440,3 +440,114 @@ class TestCodeParser:
             )
         finally:
             tmp_path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 1: Readability field tests
+# ---------------------------------------------------------------------------
+
+class TestReadabilityFields:
+    """Tests for docstring, intent_tags, documentation_gap, and complexity fields."""
+
+    def setup_method(self):
+        from code_review_graph.parser import CodeParser
+        self.parser = CodeParser()
+
+    def _parse_python(self, source: str) -> list:
+        from pathlib import Path
+        nodes, _ = self.parser.parse_bytes(Path("test.py"), source.encode())
+        return [n for n in nodes if n.kind == "Function"]
+
+    def test_function_with_docstring_sets_has_docstring(self):
+        funcs = self._parse_python(
+            'def greet(name):\n    """Say hello."""\n    return f"Hello {name}"\n'
+        )
+        assert len(funcs) == 1
+        assert funcs[0].extra.get("has_docstring") is True or funcs[0].extra.get("has_docstring") == 1
+
+    def test_function_with_docstring_sets_summary(self):
+        funcs = self._parse_python(
+            'def greet(name):\n    """Say hello."""\n    return f"Hello {name}"\n'
+        )
+        assert len(funcs) == 1
+        summary = funcs[0].extra.get("docstring_summary")
+        assert summary is not None and len(summary) > 0
+
+    def test_function_with_todo_comment_has_intent_tag(self):
+        source = "def todo_func():\n    # TODO: implement this\n    pass\n"
+        funcs = self._parse_python(source)
+        assert len(funcs) == 1
+        tags = funcs[0].extra.get("intent_tags", [])
+        assert "TODO" in tags
+
+    def test_short_function_without_docstring_no_documentation_gap(self):
+        # Function with <= 10 lines should not trigger documentation_gap
+        lines = ["def small():\n"] + ["    x = 1\n"] * 5
+        source = "".join(lines)
+        funcs = self._parse_python(source)
+        assert len(funcs) == 1
+        assert not funcs[0].extra.get("documentation_gap")
+
+    def test_long_function_without_docstring_has_documentation_gap(self):
+        # 25-line function body without docstring -> documentation_gap=1
+        body = "    x = 0\n" * 24
+        source = f"def big_func():\n{body}    return x\n"
+        funcs = self._parse_python(source)
+        assert len(funcs) == 1
+        assert funcs[0].extra.get("documentation_gap") in (1, True)
+
+    def test_three_if_statements_complexity_score(self):
+        source = (
+            "def branchy(a, b, c):\n"
+            "    if a:\n        pass\n"
+            "    if b:\n        pass\n"
+            "    if c:\n        pass\n"
+            "    return 1\n"
+        )
+        funcs = self._parse_python(source)
+        assert len(funcs) == 1
+        score = funcs[0].extra.get("complexity_score")
+        assert score is not None
+        assert score == 4  # base 1 + 3 branches
+
+    def test_nested_if_in_for_higher_cognitive_complexity(self):
+        nested_source = (
+            "def nested_func(items):\n"
+            "    for item in items:\n"
+            "        if item > 0:\n"
+            "            pass\n"
+        )
+        flat_source = (
+            "def flat_func(a, b):\n"
+            "    if a > 0:\n"
+            "        pass\n"
+            "    if b > 0:\n"
+            "        pass\n"
+        )
+        nested_funcs = self._parse_python(nested_source)
+        flat_funcs = self._parse_python(flat_source)
+        assert len(nested_funcs) == 1
+        assert len(flat_funcs) == 1
+        nested_cc = nested_funcs[0].extra.get("cognitive_complexity", 0)
+        flat_cc = flat_funcs[0].extra.get("cognitive_complexity", 0)
+        assert nested_cc > flat_cc
+
+    def test_three_level_nesting_depth(self):
+        source = (
+            "def deep(a):\n"
+            "    if a:\n"
+            "        for x in a:\n"
+            "            if x > 0:\n"
+            "                pass\n"
+        )
+        funcs = self._parse_python(source)
+        assert len(funcs) == 1
+        depth = funcs[0].extra.get("nesting_depth")
+        assert depth is not None
+        assert depth >= 3
+
+    def test_six_parameter_function_param_count(self):
+        source = "def many_args(a, b, c, d, e, f):\n    pass\n"
+        funcs = self._parse_python(source)
+        assert len(funcs) == 1
+        assert funcs[0].extra.get("param_count") == 6

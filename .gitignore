@@ -76,3 +76,14 @@ design-critique.md
 design-handoff.md
 design-system-audit.md
 research-synthesis.md
+# Claw Code local artifacts
+.claw/settings.local.json
+.claw/sessions/
+.claude-flow/
+.claw.json
+.cursor/
+.cursorrules
+.opencode.json
+.windsurfrules
+AGENTS.md
+CLAW.md
