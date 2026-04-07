@@ -309,10 +309,12 @@ def full_build(repo_root: Path, store: GraphStore) -> dict:
             source = full_path.read_bytes()
             fhash = hashlib.sha256(source).hexdigest()
             nodes, edges = parser.parse_bytes(full_path, source)
-            # Detect code smells for each node
+            # Detect code smells for each node (skip graph-dependent detectors during build)
             for node in nodes:
                 source_str = source.decode("utf-8", errors="ignore")
-                smell_list = smells.analyze_node(node, store, source_str)
+                # Only use node-only and source detectors during build; graph detectors
+                # require nodes to be in the database first
+                smell_list = smells.analyze_node(node, graph=None, source=source_str)
                 if smell_list:
                     node.extra["smell_tags"] = [s["tag"] for s in smell_list]
             store.store_file_nodes_edges(str(full_path), nodes, edges, fhash)
