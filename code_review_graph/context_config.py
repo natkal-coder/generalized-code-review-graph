@@ -43,19 +43,21 @@ def load_context_config(repo_root: str | Path = ".") -> ContextConfig:
     """
     repo_root = Path(repo_root)
 
-    # Environment variable defaults
-    max_tokens = int(os.getenv("CRG_CONTEXT_MAX_TOKENS", "200000"))
-    eviction_threshold = float(os.getenv("CRG_EVICTION_THRESHOLD", "0.85"))
-    lru_k = int(os.getenv("CRG_CONTEXT_LRU_K", "2"))
-    agent_type = os.getenv("CRG_AGENT_TYPE")
+    # Track which env vars were explicitly set
+    env_max_tokens = "CRG_CONTEXT_MAX_TOKENS" in os.environ
+    env_eviction = "CRG_EVICTION_THRESHOLD" in os.environ
+    env_lru_k = "CRG_CONTEXT_LRU_K" in os.environ
+    env_agent = "CRG_AGENT_TYPE" in os.environ
+    env_persistence = "CRG_CONTEXT_PERSISTENCE_PATH" in os.environ
 
-    persistence_path_env = os.getenv("CRG_CONTEXT_PERSISTENCE_PATH")
-    if persistence_path_env:
-        persistence_path = persistence_path_env
-    else:
-        persistence_path = str(repo_root / ".code-review-graph" / "context.db")
+    # Defaults
+    max_tokens = 200000
+    eviction_threshold = 0.85
+    lru_k = 2
+    agent_type = None
+    persistence_path = str(repo_root / ".code-review-graph" / "context.db")
 
-    # Try to load from .code-review-graph/settings.json
+    # Try to load from .code-review-graph/settings.json first
     settings_file = repo_root / ".code-review-graph" / "settings.json"
     if settings_file.exists():
         try:
@@ -71,6 +73,18 @@ def load_context_config(repo_root: str | Path = ".") -> ContextConfig:
         except (json.JSONDecodeError, IOError) as e:
             # Silently ignore parse errors; use defaults
             pass
+
+    # Override with environment variables (takes precedence)
+    if env_max_tokens:
+        max_tokens = int(os.getenv("CRG_CONTEXT_MAX_TOKENS"))
+    if env_eviction:
+        eviction_threshold = float(os.getenv("CRG_EVICTION_THRESHOLD"))
+    if env_lru_k:
+        lru_k = int(os.getenv("CRG_CONTEXT_LRU_K"))
+    if env_agent:
+        agent_type = os.getenv("CRG_AGENT_TYPE")
+    if env_persistence:
+        persistence_path = os.getenv("CRG_CONTEXT_PERSISTENCE_PATH")
 
     scoring_weights = {
         "recency": 0.5,

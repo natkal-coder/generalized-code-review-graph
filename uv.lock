@@ -259,79 +259,6 @@ wheels = [
 ]
 
 [[package]]
-name = "code-review-graph"
-version = "2.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "fastmcp" },
-    { name = "mcp" },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "tree-sitter" },
-    { name = "tree-sitter-language-pack" },
-    { name = "watchdog" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "igraph" },
-    { name = "matplotlib" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "ollama" },
-    { name = "pyyaml" },
-    { name = "sentence-transformers" },
-]
-communities = [
-    { name = "igraph" },
-]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-embeddings = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "sentence-transformers" },
-]
-eval = [
-    { name = "matplotlib" },
-    { name = "pyyaml" },
-]
-google-embeddings = [
-    { name = "google-generativeai" },
-]
-wiki = [
-    { name = "ollama" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "code-review-graph", extras = ["communities"], marker = "extra == 'all'" },
-    { name = "code-review-graph", extras = ["embeddings"], marker = "extra == 'all'" },
-    { name = "code-review-graph", extras = ["eval"], marker = "extra == 'all'" },
-    { name = "code-review-graph", extras = ["wiki"], marker = "extra == 'all'" },
-    { name = "fastmcp", specifier = ">=0.1.0,<2" },
-    { name = "google-generativeai", marker = "extra == 'google-embeddings'", specifier = ">=0.8.0,<1" },
-    { name = "igraph", marker = "extra == 'communities'", specifier = ">=0.11.0" },
-    { name = "matplotlib", marker = "extra == 'eval'", specifier = ">=3.7.0" },
-    { name = "mcp", specifier = ">=1.0.0,<2" },
-    { name = "networkx", specifier = ">=3.2,<4" },
-    { name = "numpy", marker = "extra == 'embeddings'", specifier = ">=1.26,<3" },
-    { name = "ollama", marker = "extra == 'wiki'", specifier = ">=0.1.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0,<9" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23,<1" },
-    { name = "pyyaml", marker = "extra == 'eval'", specifier = ">=6.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0,<1" },
-    { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=3.0.0,<4" },
-    { name = "tree-sitter", specifier = ">=0.23.0,<1" },
-    { name = "tree-sitter-language-pack", specifier = ">=0.3.0,<1" },
-    { name = "watchdog", specifier = ">=4.0.0,<6" },
-]
-provides-extras = ["embeddings", "google-embeddings", "communities", "eval", "wiki", "all", "dev"]
-
-[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -695,6 +622,79 @@ sdist = { url = "https://files.pythonhosted.org/packages/51/7c/f60c259dcbf4f0c47
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/ab/fb21f4c939bb440104cc2b396d3be1d9b7a9fd3c6c2a53d98c45b3d7c954/fsspec-2026.2.0-py3-none-any.whl", hash = "sha256:98de475b5cb3bd66bedd5c4679e87b4fdfe1a3bf4d707b151b3c07e58c9a2437", size = 202505, upload-time = "2026-02-05T21:50:51.819Z" },
 ]
+
+[[package]]
+name = "generalized-code-review-graph"
+version = "2.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "fastmcp" },
+    { name = "mcp" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-language-pack" },
+    { name = "watchdog" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "igraph" },
+    { name = "matplotlib" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "ollama" },
+    { name = "pyyaml" },
+    { name = "sentence-transformers" },
+]
+communities = [
+    { name = "igraph" },
+]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+embeddings = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "sentence-transformers" },
+]
+eval = [
+    { name = "matplotlib" },
+    { name = "pyyaml" },
+]
+google-embeddings = [
+    { name = "google-generativeai" },
+]
+wiki = [
+    { name = "ollama" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastmcp", specifier = ">=0.1.0,<2" },
+    { name = "generalized-code-review-graph", extras = ["communities"], marker = "extra == 'all'" },
+    { name = "generalized-code-review-graph", extras = ["embeddings"], marker = "extra == 'all'" },
+    { name = "generalized-code-review-graph", extras = ["eval"], marker = "extra == 'all'" },
+    { name = "generalized-code-review-graph", extras = ["wiki"], marker = "extra == 'all'" },
+    { name = "google-generativeai", marker = "extra == 'google-embeddings'", specifier = ">=0.8.0,<1" },
+    { name = "igraph", marker = "extra == 'communities'", specifier = ">=0.11.0" },
+    { name = "matplotlib", marker = "extra == 'eval'", specifier = ">=3.7.0" },
+    { name = "mcp", specifier = ">=1.0.0,<2" },
+    { name = "networkx", specifier = ">=3.2,<4" },
+    { name = "numpy", marker = "extra == 'embeddings'", specifier = ">=1.26,<3" },
+    { name = "ollama", marker = "extra == 'wiki'", specifier = ">=0.1.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0,<9" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23,<1" },
+    { name = "pyyaml", marker = "extra == 'eval'", specifier = ">=6.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0,<1" },
+    { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=3.0.0,<4" },
+    { name = "tree-sitter", specifier = ">=0.23.0,<1" },
+    { name = "tree-sitter-language-pack", specifier = ">=0.3.0,<1" },
+    { name = "watchdog", specifier = ">=4.0.0,<6" },
+]
+provides-extras = ["embeddings", "google-embeddings", "communities", "eval", "wiki", "all", "dev"]
 
 [[package]]
 name = "google-ai-generativelanguage"
