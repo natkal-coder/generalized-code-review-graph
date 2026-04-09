@@ -1,5 +1,17 @@
 # Features
 
+## v3.0.0 (Planned: Context Engineering)
+- **Live Context-Graph**: In-memory hot cache layer with O(1) lookup before main SQLite graph
+  - Hash-map based file access tracking with automatic LRU + frequency eviction
+  - Timing counters on nodes (last-accessed timestamp) for cache intelligence
+  - Real-time access pattern learning across entire session
+  - Auto-discard older/less-used nodes when context window approaches capacity
+  - Periodic persistence to disk (configurable interval, default 5 seconds)
+  - Context-graph DB size bounded by AI agent's max context window
+  - Agent-aware initialization (Claude Code, Cursor, Gemini CLI, Windsurf, Zed, Continue detect context limits a priori)
+  - Graceful fallback to main graph on context-graph miss
+  - Query cost reduction: ~90% of graph queries served from memory cache
+
 ## v2.1.0 (Current)
 - **22 MCP tools** (up from 9): 13 new tools for flows, communities, architecture, refactoring, wiki, multi-repo, and risk-scored change detection.
 - **5 MCP prompts**: `review_changes`, `architecture_map`, `debug_issue`, `onboard_developer`, `pre_merge_check` workflow templates.

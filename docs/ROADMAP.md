@@ -56,6 +56,17 @@
 
 ## Planned
 
+### v3.0.0 (Context Engineering)
+- **Live Context-Graph** — In-memory hot cache of accessed files with LRU eviction
+  - Timing counters on nodes (last-accessed timestamp)
+  - Hash-map based lookup for O(1) query before main SQLite graph
+  - Tracks file access patterns in real-time
+  - Discard older/less-used nodes when context window fills (LRU + frequency heuristic)
+  - Periodic persistence to disk (configurable interval, default 5s)
+  - Context-graph DB size bounded by agent's max context window (configurable per agent: Claude Code, Cursor, Gemini CLI, Windsurf, Zed, Continue)
+  - Auto-detect client context window at initialization
+  - Fallback to main graph when context-graph miss occurs
+
 - GitHub PR bot integration
 - Team sync (shared graph via git-tracked DB)
 - SSE/HTTP MCP transport for multi-client access
