@@ -1,16 +1,16 @@
-<h1 align="center">code-review-graph</h1>
+<h1 align="center">generalized-code-review-graph</h1>
 
 <p align="center">
   <strong>AI-powered code review tool that cuts token costs by 8.2x</strong><br>
-  Build semantic knowledge graphs of your codebase for smarter AI code reviews
+  Build semantic knowledge graphs of your codebase for smarter AI code reviews with Claude, Cursor, Gemini CLI, and more
 </p>
 
 <p align="center">
-  <a href="https://code-review-graph.com"><img src="https://img.shields.io/badge/website-code--review--graph.com-blue?style=flat-square" alt="Website"></a>
+  <a href="https://generalized-code-review-graph.com"><img src="https://img.shields.io/badge/website-generalized--code--review--graph.com-blue?style=flat-square" alt="Website"></a>
   <a href="https://discord.gg/3p58KXqGFN"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="https://github.com/tirth8205/code-review-graph/stargazers"><img src="https://img.shields.io/github/stars/tirth8205/code-review-graph?style=flat-square" alt="Stars"></a>
+  <a href="https://github.com/tirth8205/generalized-code-review-graph/stargazers"><img src="https://img.shields.io/github/stars/tirth8205/generalized-code-review-graph?style=flat-square" alt="Stars"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="MIT Licence"></a>
-  <a href="https://github.com/tirth8205/code-review-graph/actions/workflows/ci.yml"><img src="https://github.com/tirth8205/code-review-graph/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/tirth8205/generalized-code-review-graph/actions/workflows/ci.yml"><img src="https://github.com/tirth8205/generalized-code-review-graph/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg?style=flat-square" alt="Python 3.10+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-green.svg?style=flat-square" alt="MCP"></a>
   <a href="#"><img src="https://img.shields.io/badge/version-2.1.0-purple.svg?style=flat-square" alt="v2.1.0"></a>
@@ -22,7 +22,7 @@
 
 AI coding assistants (Claude Code, Cursor, Gemini CLI) re-read your **entire codebase** on every review, refactor, or debug task. A 10,000-file monorepo = 10,000 files × N tasks = **millions of wasted tokens**.
 
-**code-review-graph solves this** by building a persistent knowledge graph of your code structure, then giving AI assistants only the minimal context they need via MCP (Model Context Protocol).
+**generalized-code-review-graph solves this** by building a persistent knowledge graph of your code structure, then giving AI assistants only the minimal context they need via MCP (Model Context Protocol).
 
 <p align="center">
   <img src="diagrams/diagram1_before_vs_after.png" alt="Token reduction: 8.2x average savings by reading only affected files instead of entire codebase" width="85%" />
@@ -32,7 +32,7 @@ AI coding assistants (Claude Code, Cursor, Gemini CLI) re-read your **entire cod
 
 ## How It Works (30 seconds)
 
-1. **Parse once** — code-review-graph parses your repo using [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (19 languages supported)
+1. **Parse once** — generalized-code-review-graph parses your repo using [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (19 languages supported)
 2. **Build graph** — Stores code structure (functions, classes, imports, calls) in local SQLite
 3. **AI gets context** — When you ask for a code review, AI queries the graph instead of reading entire files
 4. **Pay less** — AI reads only affected files, parameters, dependencies. Result: **8.2x fewer tokens**
@@ -48,7 +48,7 @@ AI coding assistants (Claude Code, Cursor, Gemini CLI) re-read your **entire cod
 ### Installation
 
 ```bash
-pip install code-review-graph
+pip install generalized-code-review-graph
 code-review-graph install          # Auto-detects Claude Code, Cursor, Gemini CLI, Windsurf, Zed, etc.
 code-review-graph build            # Parse your codebase (takes ~10s for 500 files)
 ```

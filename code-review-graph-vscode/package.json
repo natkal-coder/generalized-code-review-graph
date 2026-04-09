@@ -1,7 +1,7 @@
 {
-  "name": "code-review-graph",
-  "displayName": "Code Review Graph",
-  "description": "Visualize code dependencies, blast radius, and review context from your code-review-graph database directly in VS Code.",
+  "name": "generalized-code-review-graph",
+  "displayName": "Generalized Code Review Graph",
+  "description": "Visualize code dependencies, blast radius, and review context from your generalized-code-review-graph database directly in VS Code.",
   "version": "0.2.0",
   "publisher": "tirth8205",
   "license": "MIT",
@@ -13,11 +13,12 @@
     "dependencies",
     "blast radius",
     "code review",
-    "tree-sitter"
+    "tree-sitter",
+    "ai-coding"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/tirth8205/code-review-graph"
+    "url": "https://github.com/tirth8205/generalized-code-review-graph"
   },
   "engines": {
     "vscode": "^1.85.0"
