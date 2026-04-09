@@ -6,10 +6,17 @@ Communicates via stdio (standard MCP transport).
 
 from __future__ import annotations
 
+import logging
+import os
+from pathlib import Path
 from typing import Optional
 
 from fastmcp import FastMCP
 
+from .agent_detect import detect_agent
+from .context_config import load_context_config
+from .context_graph import ContextGraph
+from .context_persistence import load_context
 from .prompts import (
     architecture_map_prompt,
     debug_issue_prompt,
@@ -44,10 +51,18 @@ from .tools import (
     refactor_func,
     semantic_search_nodes,
 )
+from .tools.context_tools import (
+    clear_context,
+    get_active_context,
+    get_context_summary,
+)
+
+logger = logging.getLogger(__name__)
 
 # NOTE: Thread-safe for stdio MCP (single-threaded). If adding HTTP/SSE
 # transport with concurrent requests, replace with contextvars.ContextVar.
 _default_repo_root: str | None = None
+_context_graph: ContextGraph | None = None  # In-memory context cache (v3.0.0+)
 
 mcp = FastMCP(
     "code-review-graph",
@@ -629,6 +644,45 @@ def list_undocumented_functions_tool(
     )
 
 
+@mcp.tool()
+def get_context_summary_tool() -> dict:
+    """Get context-graph summary statistics.
+
+    Shows active session context, node counts, token usage, and capacity ratio.
+    Available in v3.0.0+ with context engineering enabled.
+
+    Returns:
+        Dict with context-graph stats (nodes, tokens, capacity, active nodes)
+    """
+    return get_context_summary(_context_graph)
+
+
+@mcp.tool()
+def get_active_context_tool() -> dict:
+    """Get top active context nodes sorted by relevance.
+
+    Lists the N most relevant cached nodes currently in memory, with access patterns.
+    Available in v3.0.0+ with context engineering enabled.
+
+    Returns:
+        Dict with active context nodes and metadata
+    """
+    return get_active_context(_context_graph)
+
+
+@mcp.tool()
+def clear_context_tool() -> dict:
+    """Clear all cached context from the session.
+
+    Resets the in-memory context-graph, forcing fresh loads from the main database.
+    Available in v3.0.0+ with context engineering enabled.
+
+    Returns:
+        Dict with cleared nodes count and tokens freed
+    """
+    return clear_context(_context_graph)
+
+
 @mcp.prompt()
 def review_changes(base: str = "HEAD~1") -> list[dict]:
     """Pre-commit review workflow using detect_changes, affected_flows, and test gaps.
@@ -685,8 +739,29 @@ def pre_merge_check(base: str = "HEAD~1") -> list[dict]:
 
 def main(repo_root: str | None = None) -> None:
     """Run the MCP server via stdio."""
-    global _default_repo_root
+    global _default_repo_root, _context_graph
     _default_repo_root = repo_root
+
+    # Initialize context-graph (v3.0.0+)
+    # Can be disabled via CRG_CONTEXT_GRAPH_ENABLED=false
+    if os.getenv("CRG_CONTEXT_GRAPH_ENABLED", "true").lower() == "true":
+        try:
+            effective_repo_root = repo_root or str(Path.cwd())
+            config = load_context_config(effective_repo_root)
+            agent = detect_agent()
+            db_path = Path(config.persistence_path)
+            _context_graph = load_context(db_path, config, agent)
+            logger.info(
+                "Context-graph initialized: agent=%s, capacity=%d tokens",
+                agent.name,
+                agent.effective_capacity(),
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to initialize context-graph (will continue without it): %s", e
+            )
+            _context_graph = None
+
     mcp.run(transport="stdio")
 
 
